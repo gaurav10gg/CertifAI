@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Trained artifacts
+#
+# certifai_models.joblib IS committed (0.7 MB) so that a deployment never has to
+# run training -- see the negation below. Everything else in models/ is a
+# regenerable by-product of a training run and stays out.
+backend/models/*
+!backend/models/certifai_models.joblib
+!backend/models/validation_report.json
+
+# Generated assessment documents and scratch output
+*.pdf
+!docs/**/*.pdf
+preview_*.png
+_check*.pdf
+_payload.json
+headers.txt
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

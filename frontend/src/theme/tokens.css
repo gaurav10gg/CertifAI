@@ -1,0 +1,74 @@
+/**
+ * tokens.css -- the single source of truth for CertifAI's colour system.
+ *
+ * Values are space-separated RGB channels rather than hex, so Tailwind can apply
+ * opacity modifiers (text-ink/60, border-line/50) to any token.
+ *
+ * The system is strictly monochrome. Light mode is white paper with near-black
+ * ink; dark mode inverts to near-black paper with off-white ink. In both, the
+ * primary-action accent is simply the ink colour, which is why buttons read as
+ * solid black in light mode and solid white in dark mode.
+ *
+ * `--pass` and `--fail` are the ONLY chromatic values in the product, and they
+ * are reserved for compliance verdicts. Each mode gets its own pair because a
+ * green that meets contrast on white is too dark to read on near-black; it is
+ * still one green and one red per theme.
+ */
+
+:root {
+  /* Surfaces, lightest to most recessed. */
+  --paper: 255 255 255;
+  --surface: 250 250 250;
+  --raised: 255 255 255;
+
+  /* Text, most to least prominent. */
+  --ink: 10 10 10;
+  --ink-muted: 107 107 107;
+  --ink-faint: 154 154 154;
+
+  /* Hairlines and dividers. */
+  --line: 229 229 229;
+  --line-strong: 201 201 201;
+
+  /* Primary actions: black on white. */
+  --accent: 10 10 10;
+  --accent-ink: 255 255 255;
+
+  /* Verdict colours -- the only chroma in the system. */
+  --pass: 22 121 65;
+  --fail: 178 34 41;
+
+  /* Chart geometry, read by SpectrumChart via getComputedStyle. */
+  --chart-grid: 237 237 237;
+  --chart-zone: 10 10 10;
+  --chart-zone-alpha: 0.05;
+
+  color-scheme: light;
+}
+
+.dark {
+  --paper: 10 10 10;
+  --surface: 18 18 18;
+  --raised: 23 23 23;
+
+  --ink: 245 245 245;
+  --ink-muted: 150 150 150;
+  --ink-faint: 110 110 110;
+
+  --line: 42 42 42;
+  --line-strong: 58 58 58;
+
+  /* Primary actions invert: white on black. */
+  --accent: 245 245 245;
+  --accent-ink: 10 10 10;
+
+  /* Lightened so they clear contrast requirements against near-black. */
+  --pass: 74 190 122;
+  --fail: 242 116 122;
+
+  --chart-grid: 38 38 38;
+  --chart-zone: 245 245 245;
+  --chart-zone-alpha: 0.06;
+
+  color-scheme: dark;
+}

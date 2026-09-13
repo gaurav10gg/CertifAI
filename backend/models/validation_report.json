@@ -1,0 +1,239 @@
+{
+  "artifact_version": "1.0.0",
+  "generated_at": "2026-09-12T07:23:00+00:00",
+  "metric_semantics": "All accuracy figures are SIMULATION-CONSISTENCY scores: they measure agreement between the models and the physics simulation in simulate.py/features.py on held-out synthetic designs. They are NOT real-world accuracy against measured hardware, and must never be presented as such.",
+  "n_samples": 5000,
+  "n_train": 3500,
+  "n_val": 750,
+  "n_test": 750,
+  "feature_names": [
+    "switching_frequency_khz",
+    "dv_dt_v_per_us",
+    "cable_length_m",
+    "shielding_quality",
+    "load_current_a",
+    "pwm_cm_penalty_db",
+    "band_a_peak_dbuv",
+    "band_a_rms_dbuv",
+    "band_a_harmonic_count",
+    "band_a_thd_score",
+    "band_b_peak_dbuv",
+    "band_b_rms_dbuv",
+    "band_b_harmonic_count",
+    "band_b_thd_score",
+    "band_c_peak_dbuv",
+    "band_c_rms_dbuv",
+    "band_c_harmonic_count",
+    "band_c_thd_score"
+  ],
+  "monotone_constraints_risk": [
+    1,
+    1,
+    1,
+    -1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "monotone_constraints_margin": [
+    -1,
+    -1,
+    -1,
+    1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1
+  ],
+  "band_metrics": [
+    {
+      "band_key": "band_a",
+      "band_label": "150 kHz - 500 kHz",
+      "fail_rate": 0.3466666666666667,
+      "classifier_accuracy": 0.9826666666666667,
+      "classifier_balanced_accuracy": 0.9822213500784929,
+      "classifier_roc_auc": 0.9989952904238619,
+      "margin_mae_db": 0.547722558603836,
+      "margin_rmse_db": 0.6874139245507692,
+      "margin_r2": 0.9980129504884484,
+      "classifier_best_iteration": 150,
+      "regressor_best_iteration": 194
+    },
+    {
+      "band_key": "band_b",
+      "band_label": "500 kHz - 5 MHz",
+      "fail_rate": 0.36933333333333335,
+      "classifier_accuracy": 1.0,
+      "classifier_balanced_accuracy": 1.0,
+      "classifier_roc_auc": 1.0,
+      "margin_mae_db": 0.1346134606264573,
+      "margin_rmse_db": 0.26104973629301215,
+      "margin_r2": 0.9997212657831775,
+      "classifier_best_iteration": 292,
+      "regressor_best_iteration": 247
+    },
+    {
+      "band_key": "band_c",
+      "band_label": "5 MHz - 30 MHz",
+      "fail_rate": 0.064,
+      "classifier_accuracy": 0.9973333333333333,
+      "classifier_balanced_accuracy": 0.9888710826210826,
+      "classifier_roc_auc": 0.9999703228869895,
+      "margin_mae_db": 0.21395210292616898,
+      "margin_rmse_db": 0.2838233244080679,
+      "margin_r2": 0.9996283138215817,
+      "classifier_best_iteration": 209,
+      "regressor_best_iteration": 208
+    }
+  ],
+  "design_only_ablation": {
+    "note": "Same models restricted to the six design parameters, with every spectral feature removed. The headline models see band_*_peak_dbuv, which is very nearly a sufficient statistic for the margin label, so their scores are high by construction. These ablation figures reflect the harder problem of predicting compliance from the design alone.",
+    "feature_names": [
+      "switching_frequency_khz",
+      "dv_dt_v_per_us",
+      "cable_length_m",
+      "shielding_quality",
+      "load_current_a",
+      "pwm_cm_penalty_db"
+    ],
+    "band_metrics": [
+      {
+        "band_key": "band_a",
+        "band_label": "150 kHz - 500 kHz",
+        "fail_rate": 0.3466666666666667,
+        "classifier_accuracy": 0.9653333333333334,
+        "classifier_balanced_accuracy": 0.964442700156986,
+        "classifier_roc_auc": 0.9963265306122449,
+        "margin_mae_db": 1.0592337691425073,
+        "margin_rmse_db": 1.4209693136046213,
+        "margin_r2": 0.9915093402636123,
+        "classifier_best_iteration": 599,
+        "regressor_best_iteration": 330
+      },
+      {
+        "band_key": "band_b",
+        "band_label": "500 kHz - 5 MHz",
+        "fail_rate": 0.36933333333333335,
+        "classifier_accuracy": 0.9706666666666667,
+        "classifier_balanced_accuracy": 0.9715083841521588,
+        "classifier_roc_auc": 0.9971454957602217,
+        "margin_mae_db": 1.2287398280120114,
+        "margin_rmse_db": 1.6271149853358806,
+        "margin_r2": 0.9891712018851735,
+        "classifier_best_iteration": 599,
+        "regressor_best_iteration": 330
+      },
+      {
+        "band_key": "band_c",
+        "band_label": "5 MHz - 30 MHz",
+        "fail_rate": 0.064,
+        "classifier_accuracy": 0.9773333333333334,
+        "classifier_balanced_accuracy": 0.9393696581196581,
+        "classifier_roc_auc": 0.9943613485280152,
+        "margin_mae_db": 1.8823987336500743,
+        "margin_rmse_db": 2.4825880801709803,
+        "margin_r2": 0.9715626202125509,
+        "classifier_best_iteration": 599,
+        "regressor_best_iteration": 311
+      }
+    ]
+  },
+  "monotonicity_audit": [
+    {
+      "feature": "switching_frequency_khz",
+      "risk_sign": 1,
+      "worst_risk_decrease": 0.0,
+      "respects_constraint": true
+    },
+    {
+      "feature": "dv_dt_v_per_us",
+      "risk_sign": 1,
+      "worst_risk_decrease": 0.0,
+      "respects_constraint": true
+    },
+    {
+      "feature": "cable_length_m",
+      "risk_sign": 1,
+      "worst_risk_decrease": 0.0,
+      "respects_constraint": true
+    },
+    {
+      "feature": "shielding_quality",
+      "risk_sign": -1,
+      "worst_risk_decrease": 0.0,
+      "respects_constraint": true
+    },
+    {
+      "feature": "load_current_a",
+      "risk_sign": 1,
+      "worst_risk_decrease": 0.0,
+      "respects_constraint": true
+    },
+    {
+      "feature": "pwm_cm_penalty_db",
+      "risk_sign": 1,
+      "worst_risk_decrease": 0.0,
+      "respects_constraint": true
+    }
+  ],
+  "seed_stability": {
+    "n_designs": 24,
+    "n_seeds_per_design": 5,
+    "simulator_margin_sd_db": 0.24555220942265418,
+    "model_margin_sd_db": 0.24469025222470642,
+    "variance_reduction_factor": 1.0035226462440203
+  },
+  "simulator_config": {
+    "sample_rate_hz": 200000000.0,
+    "n_segments": 6,
+    "coupling_calibration": 0.005
+  },
+  "limit_curve": {
+    "anchors_hz_dbuv": [
+      [
+        150000.0,
+        79.0
+      ],
+      [
+        500000.0,
+        73.0
+      ],
+      [
+        5000000.0,
+        73.0
+      ],
+      [
+        30000000.0,
+        70.0
+      ]
+    ],
+    "description": "Synthetic EN-12016-style conducted-emission limit: 79 dBuV at 150 kHz tapering log-linearly to 73 dBuV at 500 kHz, flat at 73 dBuV to 5 MHz, then tapering to 70 dBuV at 30 MHz. Anchored on publicly described CISPR 11 Group 1 Class A quasi-peak levels; the tapers are an assumption of this tool and are not normative.",
+    "status": "SYNTHETIC -- not the normative EN 12016 limit table"
+  },
+  "environment": {
+    "python": "3.10.10",
+    "xgboost": "2.1.3",
+    "numpy": "2.2.1"
+  }
+}
