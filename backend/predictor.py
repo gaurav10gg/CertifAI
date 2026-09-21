@@ -75,42 +75,42 @@ CONFIDENCE_THRESHOLDS: Tuple[Tuple[float, str], ...] = (
     (0.0, "Low Confidence"),
 )
 
-# Confidence is capped below 100 on purpose.
-#
-# The figure computed below is the probability that the verdict is on the correct
-# side of the limit *given the model's measured error against our own simulator*.
-# That is only one of the two uncertainties in play. The other -- how well the
-# synthetic physics model matches real hardware -- is currently unquantified,
-# because there is no measured data anywhere in this pipeline (see calibrate.py).
-#
-# Since the unquantified term cannot be folded into the arithmetic, the reported
-# figure is capped instead. Printing "100/100 confidence" for an assessment whose
-# dominant error source has never been measured would be the single most
-# misleading number this tool could produce.
+# Confidence is capped below 100 on purpose. The interval around the risk score
+# is the quantity that should move; this figure is retained as a secondary
+# "how close is this to a band edge" indicator, not a claim about hardware.
 CONFIDENCE_CEILING: float = 97.0
 
 CONFIDENCE_CEILING_NOTE: str = (
-    "Confidence is the probability that this verdict falls on the correct side of "
-    "the limit line, given the models' measured margin error against our physics "
-    "simulation. It is capped at "
-    f"{CONFIDENCE_CEILING:.0f} because it does not include how closely that "
-    "simulation matches real hardware, which is unquantified until measured "
-    "calibration data exists."
+    "The ± band on the risk score is the spread across an ensemble of "
+    "monotone-constrained models (or, if the ensemble has not been trained, a "
+    "conservative mapping of held-out margin error). It measures agreement with "
+    "this tool's own physics simulation, not with accredited lab measurements, "
+    "and is therefore a floor on the true uncertainty."
 )
 
-# Applied once per band where the classifier and the margin regressor disagree
-# about which side of the limit the design falls on.
 DISAGREEMENT_PENALTY: float = 0.80
 
+RISK_FRAMING: str = (
+    "This tool estimates EMC risk from simulated physics. It does not predict "
+    "EN 12016 certification outcomes, which require accredited lab measurement."
+)
+
 DISCLAIMER_SHORT: str = (
-    "This is a simulation-based prediction validated against our physics model, "
-    "not a substitute for accredited EMC lab certification."
+    "This is a simulation-based pre-compliance risk indicator to guide design "
+    "decisions, not a substitute for accredited EMC lab certification."
 )
 
 DISCLAIMER_LONG: str = (
-    "This is a simulation-based pre-compliance assessment intended to support "
-    "early-stage design decisions. It does not replace accredited EMC "
-    "certification testing (e.g. per EN 12016)."
+    "This is a simulation-based pre-compliance risk assessment intended to "
+    "support early-stage design decisions. It does not replace accredited EMC "
+    "certification testing (e.g. per EN 12016), and it does not predict "
+    "certification outcomes."
+)
+
+RISK_TIERS: Tuple[Tuple[float, str, str], ...] = (
+    (70.0, "LOW", "Low risk"),
+    (40.0, "MODERATE", "Moderate risk"),
+    (0.0, "HIGH", "High risk"),
 )
 
 
@@ -125,6 +125,12 @@ class ModelBundle:
     scaler: Any
     classifiers: Sequence[xgb.XGBClassifier]
     regressors: Sequence[xgb.XGBRegressor]
+    # Optional bootstrap ensemble of margin regressors, shape (n_members, n_bands).
+    ensemble_regressors: Sequence[Sequence[xgb.XGBRegressor]]
+    # Six-parameter margin regressors (no spectral features). Used for SHAP.
+    design_only_scaler: Any
+    design_only_regressors: Sequence[xgb.XGBRegressor]
+    design_only_feature_names: Sequence[str]
     feature_names: Sequence[str]
     # Held-out margin RMSE of the deployed models against the simulator.
     margin_rmse_db: Sequence[float]
@@ -189,6 +195,10 @@ def load_models(path: Optional[str] = None) -> ModelBundle:
         scaler=raw["scaler"],
         classifiers=raw["classifiers"],
         regressors=raw["regressors"],
+        ensemble_regressors=raw.get("ensemble_regressors") or (),
+        design_only_scaler=raw.get("design_only_scaler"),
+        design_only_regressors=raw.get("design_only_regressors") or (),
+        design_only_feature_names=raw.get("design_only_feature_names") or (),
         feature_names=raw["feature_names"],
         margin_rmse_db=raw["margin_rmse_db"],
         margin_rmse_conservative_db=_conservative_rmse(report, raw["margin_rmse_db"]),
@@ -214,6 +224,35 @@ def _compliance_score(margins_db: Sequence[float]) -> float:
         + WORST_BAND_WEIGHT * float(np.min(scores))
     )
     return float(np.clip(blended, 0.0, 100.0))
+
+
+def _risk_level(score: float) -> Dict[str, str]:
+    """Three-tier summary of the 0-100 risk score.
+
+    Higher score = more headroom = lower EMC risk. The tiers are a summary of
+    the per-band margins, not a certification prediction.
+    """
+    for threshold, key, label in RISK_TIERS:
+        if score >= threshold:
+            return {"key": key, "label": label}
+    return {"key": "HIGH", "label": "High risk"}
+
+
+def _risk_copy(level_key: str) -> str:
+    if level_key == "LOW":
+        return (
+            "Simulated emissions sit comfortably below the assumed limit in every "
+            "band. Treat this as design headroom, not as a certification result."
+        )
+    if level_key == "MODERATE":
+        return (
+            "At least one band is close to the assumed limit, or the overall "
+            "headroom is thin. A targeted change is worth evaluating before a lab."
+        )
+    return (
+        "One or more bands are predicted to exceed the assumed limit by a "
+        "material margin. This is a design-risk flag, not a lab fail."
+    )
 
 
 def _normal_cdf(z: float) -> float:
@@ -329,9 +368,8 @@ def _shap_contributions(
 ) -> np.ndarray:
     """Exact per-feature SHAP contributions to the log-odds of failure.
 
-    XGBoost computes these analytically for tree ensembles (``pred_contribs``), so
-    the attribution is exact for this model rather than an approximation. Falls
-    back to gain-based importance if the booster cannot provide contributions.
+    Used only for the ranked-countermeasures heuristic. The SHAP chart uses
+    :func:`_shap_margin_contributions` on the design-only margin regressor.
     """
     try:
         matrix = xgb.DMatrix(scaled_features)
@@ -342,6 +380,52 @@ def _shap_contributions(
     except Exception:  # pragma: no cover - defensive fallback
         importances = np.asarray(classifier.feature_importances_, dtype=float)
         return importances
+
+
+def _design_only_matrix(bundle: ModelBundle, features: np.ndarray) -> np.ndarray:
+    """Slice the 18-feature vector to the six design parameters and scale them."""
+    names = list(bundle.design_only_feature_names) or [
+        spec.name for spec in DESIGN_FEATURE_SPECS
+    ]
+    indices = [FEATURE_NAMES.index(name) for name in names]
+    vector = np.asarray(features, dtype=float).reshape(-1)[indices].reshape(1, -1)
+    if bundle.design_only_scaler is None:
+        raise ModelNotTrainedError(
+            "Design-only margin models are missing. Run: python train_model.py --design-only"
+        )
+    return bundle.design_only_scaler.transform(vector)
+
+
+def _shap_margin_contributions(
+    bundle: ModelBundle,
+    features: np.ndarray,
+    band_index: int,
+) -> Tuple[np.ndarray, float, float]:
+    """Exact SHAP of the design-only margin regressor for one band.
+
+    Returns ``(shap_values, bias, predicted_margin_db)``. The additive identity
+    ``sum(shap_values) + bias ≈ predicted_margin_db`` holds for tree SHAP.
+    """
+    if not bundle.design_only_regressors:
+        raise ModelNotTrainedError(
+            "Design-only margin models are missing. Run: python train_model.py --design-only"
+        )
+    scaled = _design_only_matrix(bundle, features)
+    regressor = bundle.design_only_regressors[band_index]
+    matrix = xgb.DMatrix(scaled)
+    booster = regressor.get_booster()
+    best = getattr(regressor, "best_iteration", None)
+    kwargs: Dict[str, Any] = {"validate_features": False}
+    if best is not None:
+        kwargs["iteration_range"] = (0, int(best) + 1)
+    predicted = float(booster.predict(matrix, **kwargs)[0])
+    contributions = np.asarray(
+        booster.predict(matrix, pred_contribs=True, **kwargs)
+    )[0]
+    n_features = scaled.shape[1]
+    shap_values = np.asarray(contributions[:n_features], dtype=float)
+    bias = float(contributions[n_features])
+    return shap_values, bias, predicted
 
 
 def _risk_factor(
@@ -414,6 +498,197 @@ def _risk_factor(
     }
 
 
+def _shap_waterfall(
+    bundle: ModelBundle,
+    features: np.ndarray,
+    band_index: int,
+) -> Dict[str, Any]:
+    """Design-only SHAP contributions to predicted margin (dB) for the worst band."""
+    shap_values, bias, predicted = _shap_margin_contributions(
+        bundle, features, band_index
+    )
+    names = list(bundle.design_only_feature_names) or [
+        spec.name for spec in DESIGN_FEATURE_SPECS
+    ]
+    rows: List[Dict[str, Any]] = []
+    for name, value in zip(names, shap_values):
+        if name == "pwm_cm_penalty_db":
+            label = "PWM modulation"
+        else:
+            label = PARAMETER_RANGE_BY_KEY[name].label
+        shap_db = float(value)
+        rows.append({
+            "parameter": name,
+            "label": label,
+            "shap": round(shap_db, 3),
+            "raises_risk": shap_db < 0.0,
+        })
+    rows.sort(key=lambda row: abs(float(row["shap"])), reverse=True)
+    band_label = EMC_BANDS[band_index].label
+    return {
+        "band": band_label,
+        "unit": "dB",
+        "base_value_db": round(bias, 3),
+        "predicted_margin_db": round(predicted, 3),
+        "note": (
+            "Exact tree SHAP values from the design-only margin model "
+            "(6 parameters, no spectral shortcut) for "
+            f"{band_label}, the band with the least predicted headroom. "
+            "Positive values increase predicted margin (more headroom); "
+            "negative values reduce it."
+        ),
+        "contributions": rows,
+    }
+
+
+def _countermeasures(
+    ranking: Sequence[Dict[str, Any]],
+    params: DeviceParameters,
+    n: int = 3,
+) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for entry in ranking[:n]:
+        key = str(entry["parameter"])
+        if key == "pwm_cm_penalty_db":
+            current = float(params.pwm_cm_penalty_db)
+            target = _suggested_target(key, current)
+            items.append({
+                "parameter": key,
+                "label": "PWM Modulation Strategy",
+                "suggestion": _SUGGESTIONS[key].format(target=target),
+                "current_value": PWM_MODULATION_LABELS[params.pwm_modulation_type],
+                "suggested_value": "DPWM",
+            })
+            continue
+        rge = PARAMETER_RANGE_BY_KEY[key]
+        current = float(getattr(params, key))
+        target = _suggested_target(key, current)
+        items.append({
+            "parameter": key,
+            "label": rge.label,
+            "suggestion": _SUGGESTIONS[key].format(target=target),
+            "current_value": round(current, 2),
+            "suggested_value": round(target, 2),
+        })
+    return items
+
+
+def _model_sensitivity(
+    bundle: ModelBundle,
+    features: np.ndarray,
+    base_score: float,
+) -> List[Dict[str, Any]]:
+    """Local finite-difference of the risk score in feature space.
+
+    Each design parameter is nudged a small fraction of its training-scale
+    spread and the monotone-constrained regressors are re-evaluated -- no extra
+    physics simulation. This answers "which lever moves the needle from here"
+    at interactive latency. ``sensitivity_analysis`` below re-runs the simulator
+    when a physics-level gradient is required.
+    """
+    scaled_base = bundle.scaler.transform(features.reshape(1, -1))
+    raw = features.copy()
+    rows: List[Dict[str, Any]] = []
+    for spec in DESIGN_FEATURE_SPECS:
+        index = FEATURE_NAMES.index(spec.name)
+        scale = float(bundle.scaler.scale_[index]) if hasattr(bundle.scaler, "scale_") else 1.0
+        delta = 0.25 * max(abs(scale), 1e-6) * spec.risk_sign
+        nudged = raw.copy()
+        nudged[index] += delta
+        scaled = bundle.scaler.transform(nudged.reshape(1, -1))
+        margins = [
+            float(regressor.predict(scaled)[0]) for regressor in bundle.regressors
+        ]
+        score = _compliance_score(margins)
+        if spec.name == "pwm_cm_penalty_db":
+            label = "PWM modulation"
+            unit = "dB"
+        else:
+            rge = PARAMETER_RANGE_BY_KEY[spec.name]
+            label = rge.label
+            unit = rge.unit
+        rows.append({
+            "parameter": spec.name,
+            "label": label,
+            "unit": unit,
+            "delta_score": round(score - base_score, 2),
+            "direction": "raises_risk" if (score - base_score) < 0 else "lowers_risk",
+        })
+    rows.sort(key=lambda row: abs(float(row["delta_score"])), reverse=True)
+    _ = scaled_base
+    return rows
+
+
+def _ensemble_interval(
+    bundle: ModelBundle, scaled: np.ndarray, point_score: float
+) -> Tuple[float, float, float]:
+    """Return (low, high, plus_minus) for the risk score."""
+    members = bundle.ensemble_regressors
+    scores: List[float] = [point_score]
+    if members:
+        for member in members:
+            margins = [float(reg.predict(scaled)[0]) for reg in member]
+            scores.append(_compliance_score(margins))
+    else:
+        # Fallback: map conservative margin RMSE through the score function.
+        spread = float(np.mean(bundle.margin_rmse_conservative_db))
+        scores.extend([
+            _compliance_score([-spread]),  # dummy to size the band
+        ])
+        half = min(12.0, max(3.0, spread * 2.0))
+        return (
+            float(np.clip(point_score - half, 0, 100)),
+            float(np.clip(point_score + half, 0, 100)),
+            round(half, 1),
+        )
+    arr = np.asarray(scores, dtype=float)
+    std = float(arr.std())
+    half = float(np.clip(1.0 * std if std > 0.15 else 3.0, 2.0, 15.0))
+    return (
+        float(np.clip(point_score - half, 0, 100)),
+        float(np.clip(point_score + half, 0, 100)),
+        round(half, 1),
+    )
+
+
+def _serialize_signals(simulation: Any) -> List[Dict[str, Any]]:
+    traces = []
+    for trace in getattr(simulation, "explorer", ()) or ():
+        traces.append({
+            "key": trace.key,
+            "label": trace.label,
+            "unit": trace.unit,
+            "timescale": trace.timescale,
+            "description": trace.description,
+            "time_ms": [round(float(t) * 1e3, 4) for t in trace.time_s],
+            "values": [round(float(v), 4) for v in trace.values],
+        })
+    return traces
+
+
+def _serialize_power_quality(extracted: FeatureBundle) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for report in extracted.power_quality:
+        rows.append({
+            "key": report.key,
+            "label": report.label,
+            "thd_percent": round(report.thd_percent, 1),
+            "fundamental_hz": report.fundamental_hz,
+            "dominant_orders": list(report.dominant_orders),
+            "dominant_statement": report.dominant_statement,
+            "peaks": [
+                {
+                    "order": peak.order,
+                    "frequency_hz": round(peak.frequency_hz, 1),
+                    "amplitude": round(peak.amplitude, 4),
+                    "percent_of_fundamental": round(peak.percent_of_fundamental, 1),
+                }
+                for peak in report.peaks
+            ],
+        })
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -469,15 +744,19 @@ def predict(
     confidence = _confidence(
         predicted_margins, fail_probabilities, models.margin_rmse_conservative_db
     )
-    all_pass = all(b["passes"] for b in bands)
+    level = _risk_level(compliance_score)
+    score_low, score_high, plus_minus = _ensemble_interval(models, scaled, compliance_score)
 
     # The band with the least predicted headroom drives the narrative, whether or
-    # not it actually fails.
+    # not it actually sits above the assumed limit.
     worst_index = int(np.argmin(predicted_margins))
     risk_factor = _risk_factor(
         models, extracted.feature_vector, scaled, params,
         worst_index, not bands[worst_index]["passes"],
     )
+    shap = _shap_waterfall(models, extracted.feature_vector, worst_index)
+    measures = _countermeasures(risk_factor["ranking"], params, n=3)
+    sensitivity = _model_sensitivity(models, extracted.feature_vector, compliance_score)
 
     spectrum = extracted.spectrum
     consistency = _consistency_summary(models)
@@ -488,8 +767,16 @@ def predict(
         "device_name": device_name or "Custom Configuration",
         "parameters": params.as_dict(),
         "parameter_display": _parameter_display(params),
-        "verdict": "PASS" if all_pass else "FAIL",
+        "framing": RISK_FRAMING,
+        "risk_level": level["key"],
+        "risk_label": level["label"],
+        "risk_copy": _risk_copy(level["key"]),
+        "verdict": level["key"],
         "compliance_score": round(compliance_score, 1),
+        "risk_score": round(compliance_score, 1),
+        "risk_score_low": round(score_low, 1),
+        "risk_score_high": round(score_high, 1),
+        "risk_score_plus_minus": plus_minus,
         "confidence_score": round(confidence, 1),
         "confidence_label": _confidence_label(confidence),
         "confidence_ceiling": CONFIDENCE_CEILING,
@@ -497,6 +784,18 @@ def predict(
         "bands": bands,
         "worst_band": bands[worst_index]["key"],
         "top_risk_factor": risk_factor,
+        "shap": shap,
+        "countermeasures": measures,
+        "sensitivity": {
+            "note": (
+                "Change in risk score from a small nudge of each design parameter, "
+                "evaluated through the monotone-constrained models. Negative "
+                "delta_score means the nudge increased predicted EMC risk."
+            ),
+            "bars": sensitivity,
+        },
+        "signals": _serialize_signals(simulation),
+        "power_quality": _serialize_power_quality(extracted),
         "spectrum": {
             "frequency_hz": [round(float(f), 1) for f in spectrum.frequency_hz],
             "emission_dbuv": [round(float(v), 2) for v in spectrum.emission_dbuv],
@@ -511,6 +810,7 @@ def predict(
             "feature_count": len(FEATURE_NAMES),
             "monotone_constraints": list(MONOTONE_CONSTRAINTS_RISK),
             "simulation_consistency": consistency,
+            "ensemble_size": len(models.ensemble_regressors),
         },
         "limit_curve": {
             "anchors_hz_dbuv": [list(a) for a in LIMIT_CURVE_ANCHORS],
@@ -526,10 +826,10 @@ def _parameter_display(params: DeviceParameters) -> List[Dict[str, Any]]:
     """Human-readable parameter rows for the results page and the PDF."""
     rows: List[Dict[str, Any]] = []
     for key in ("switching_frequency_khz", "dv_dt_v_per_us", "cable_length_m",
-                "shielding_quality", "load_current_a"):
+                "shielding_quality", "load_current_a", "input_filter_quality"):
         rge = PARAMETER_RANGE_BY_KEY[key]
         value = float(getattr(params, key))
-        if key == "shielding_quality":
+        if key in ("shielding_quality", "input_filter_quality"):
             # Stored 0-1, but shown as a percentage everywhere it is entered or
             # read, so the display must match rather than expose the raw fraction.
             formatted = f"{value * 100:.0f} %"
@@ -611,6 +911,91 @@ def _consistency_summary(models: ModelBundle) -> Dict[str, Any]:
             ],
         },
         "seed_stability": report.get("seed_stability"),
+    }
+
+
+def sensitivity_analysis(
+    params: DeviceParameters,
+    *,
+    bundle: Optional[ModelBundle] = None,
+) -> Dict[str, Any]:
+    """Physics-level finite-difference of the risk score.
+
+    Re-simulates the configuration with each numeric parameter nudged toward
+    lower EMC risk (or, for input_filter_quality, toward more filtering) and
+    reports the resulting change in risk score. Slower than the in-payload
+    model sensitivity; intended for the tornado chart when the user wants the
+    simulator's own gradient.
+    """
+    base = predict(params, bundle=bundle)
+    base_score = float(base["risk_score"])
+    bars: List[Dict[str, Any]] = []
+
+    steps = {
+        "switching_frequency_khz": ("mul", 0.85),
+        "dv_dt_v_per_us": ("mul", 0.80),
+        "cable_length_m": ("mul", 0.80),
+        "shielding_quality": ("add", 0.10),
+        "load_current_a": ("mul", 0.85),
+        "input_filter_quality": ("add", 0.15),
+    }
+    for key, (mode, amount) in steps.items():
+        current = float(getattr(params, key))
+        rge = PARAMETER_RANGE_BY_KEY[key]
+        trial = current * amount if mode == "mul" else current + amount
+        trial = float(np.clip(trial, rge.minimum, rge.maximum))
+        if abs(trial - current) < 1e-9:
+            continue
+        kwargs = params.as_dict()
+        kwargs[key] = trial
+        nudged = DeviceParameters.clamped(**kwargs)
+        outcome = predict(nudged, bundle=bundle)
+        bars.append({
+            "parameter": key,
+            "label": rge.label,
+            "from_value": current,
+            "to_value": trial,
+            "delta_score": round(float(outcome["risk_score"]) - base_score, 2),
+        })
+    bars.sort(key=lambda row: abs(float(row["delta_score"])), reverse=True)
+    return {
+        "baseline_score": base_score,
+        "bars": bars,
+        "note": (
+            "Each bar is a one-at-a-time physics re-simulation. A positive "
+            "delta means the suggested nudge lowered predicted EMC risk."
+        ),
+    }
+
+
+def compare_assessments(
+    baseline: DeviceParameters,
+    candidate: DeviceParameters,
+    *,
+    baseline_name: str = "Baseline",
+    candidate_name: str = "Candidate",
+    bundle: Optional[ModelBundle] = None,
+) -> Dict[str, Any]:
+    """Side-by-side assessment used by Compare Mode."""
+    models = bundle or load_models()
+    left = predict(baseline, device_name=baseline_name, bundle=models)
+    right = predict(candidate, device_name=candidate_name, bundle=models)
+    band_diff = []
+    for a, b in zip(left["bands"], right["bands"]):
+        band_diff.append({
+            "key": a["key"],
+            "label": a["label"],
+            "baseline_margin_db": a["predicted_margin_db"],
+            "candidate_margin_db": b["predicted_margin_db"],
+            "delta_margin_db": round(
+                b["predicted_margin_db"] - a["predicted_margin_db"], 2
+            ),
+        })
+    return {
+        "baseline": left,
+        "candidate": right,
+        "delta_risk_score": round(right["risk_score"] - left["risk_score"], 1),
+        "band_diff": band_diff,
     }
 
 

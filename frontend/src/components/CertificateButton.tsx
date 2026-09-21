@@ -35,7 +35,7 @@ export function CertificateButton({ result }: { result: PredictionResult }) {
       setError(
         caught instanceof ApiError
           ? caught.message
-          : 'The assessment PDF could not be generated.',
+          : 'The pre-compliance report could not be generated.',
       )
     }
   }
@@ -51,7 +51,7 @@ export function CertificateButton({ result }: { result: PredictionResult }) {
         {status === 'working' ? (
           <>
             <SpinnerIcon className="h-4 w-4" />
-            Generating assessment…
+            Generating report…
           </>
         ) : status === 'done' ? (
           <>
@@ -61,7 +61,7 @@ export function CertificateButton({ result }: { result: PredictionResult }) {
         ) : (
           <>
             <DownloadIcon className="h-4 w-4" />
-            Download assessment PDF
+            Download report
           </>
         )}
       </button>

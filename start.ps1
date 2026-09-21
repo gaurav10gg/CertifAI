@@ -47,4 +47,4 @@ Start-Process powershell -ArgumentList @(
 )
 
 Write-Host ''
-Write-Host 'CertifAI is starting. Open http://localhost:5173' -ForegroundColor Green
+Write-Host 'EMC Advisor is starting. Open http://localhost:5173' -ForegroundColor Green

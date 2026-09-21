@@ -7,9 +7,10 @@ machine-room-less controller to a SiC regenerative drive. Parameter values are
 plausible engineering figures for each archetype, not measurements from a specific
 product, and no manufacturer's equipment is being characterised here.
 
-Each profile is expressed in the same six design parameters the model consumes, so
-selecting a preset is exactly equivalent to typing those numbers in by hand -- the
-presets exist to give a user a sensible starting point, not a different code path.
+Each profile is expressed in the same design parameters the model and the
+power-quality layer consume, so selecting a preset is exactly equivalent to
+typing those numbers in by hand -- the presets exist to give a user a sensible
+starting point, not a different code path.
 """
 
 from __future__ import annotations
@@ -151,13 +152,13 @@ DEVICE_PROFILES: Final[Tuple[DeviceProfile, ...]] = (
             "high-integrity screen and common-mode choke."
         ),
         highlights=(
-            "20 kHz carrier, 9.5 kV/us edges",
+            "16 kHz carrier, 9.5 kV/us edges",
             "28 m cable, full screen + CM choke",
             "70 A rated duty",
         ),
         icon="sic",
         parameters=DeviceParameters(
-            switching_frequency_khz=20.0,
+            switching_frequency_khz=16.0,
             dv_dt_v_per_us=9500.0,
             cable_length_m=28.0,
             shielding_quality=0.96,

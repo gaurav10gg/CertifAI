@@ -5,10 +5,9 @@ import { ArrowRightIcon, CustomIcon, DeviceIcon } from '../components/Icons'
 /**
  * DeviceSelect.tsx -- stage one: pick a starting point.
  *
- * The presets are not shortcuts to a verdict, they are realistic starting
- * configurations that the user is expected to then edit. Two of the six are
- * deliberately non-compliant designs, so the tool demonstrates a failure path
- * without the user having to construct one.
+ * The presets are starting points in the design space, not shortcuts to a
+ * certification result. Two of them are deliberately high-risk configurations,
+ * so the tool can demonstrate a mitigation path without the user inventing one.
  */
 
 export function DeviceSelect({
@@ -33,8 +32,8 @@ export function DeviceSelect({
         </h1>
         <p className="mt-3 text-base leading-relaxed text-ink-muted">
           Start from a representative elevator drive profile, then adjust its
-          parameters. Each preset describes a real class of installation, from a
-          compact machine-room-less controller to a high-speed ultra-rise drive.
+          parameters. The assessment that follows is a pre-compliance risk
+          indicator to guide design decisions — not a certification prediction.
         </p>
       </header>
 

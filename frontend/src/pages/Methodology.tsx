@@ -44,6 +44,11 @@ export function Methodology({
 
   return (
     <div className="space-y-9">
+      {data.framing ? (
+        <p className="rounded-card border border-line border-l-2 border-l-ink bg-surface px-5 py-3.5 text-sm leading-relaxed text-ink">
+          {data.framing}
+        </p>
+      ) : null}
       <Section
         step="01"
         title="Physics simulation"
@@ -133,13 +138,13 @@ export function Methodology({
           <p>{data.limit_curve.description}</p>
           <p>{data.limit_curve.provenance}</p>
           <p>
-            The consequence is specific: an absolute pass or fail from this tool is
+            The consequence is specific: an absolute risk tier from this tool is
             only as correct as that assumed curve. What the tool does reliably tell
             you is the <em className="not-italic text-ink">direction and size</em> of
             a change — how much a shorter cable, a better shield or a slower{' '}
             <Mono>dv/dt</Mono> moves the emission level. That is what makes it useful
             during early design, and it is why the limit is stated as an anchor list
-            you can replace.
+            you can replace. It is not a certification prediction.
           </p>
         </div>
         <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2 border-t border-line pt-3.5">
@@ -162,8 +167,8 @@ export function Methodology({
         <p>
           Two gradient-boosted models are trained per band on{' '}
           {validation.n_samples?.toLocaleString() ?? 'several thousand'} simulated
-          designs: a classifier for pass/fail and a regressor for the continuous
-          margin in dB. Both are trained with XGBoost's{' '}
+          designs: a classifier for high-risk vs clear, and a regressor for the
+          continuous margin in dB. Both are trained with XGBoost's{' '}
           <Mono>monotone_constraints</Mono>.
         </p>
         <p>
@@ -187,7 +192,9 @@ export function Methodology({
             Verified post-training by sweeping each parameter across its range:{' '}
             {validation.monotonicity_audit.filter((row) => row.respects_constraint).length}{' '}
             of {validation.monotonicity_audit.length} constraints hold in the trained
-            models.
+            models. The 200-configuration sweep and SHAP identity live on the{' '}
+            Validation page in the header — those are measured numbers, not this
+            sentence.
           </p>
         ) : null}
       </Section>
@@ -239,30 +246,32 @@ export function Methodology({
 
       <Section
         step="05"
-        title="Score, confidence and risk attribution"
-        lead="How the three headline numbers are produced."
+        title="Score, uncertainty, SHAP and sensitivity"
+        lead="How the headline numbers and charts are produced."
       >
         <p>
-          The <strong className="font-medium text-ink">compliance score</strong> maps
+          The <strong className="font-medium text-ink">risk score</strong> maps
           each band's predicted margin through a saturating function — 0 dB of margin
           becomes 50 — then blends the mean of the three bands with the worst of them
-          in equal parts. A design cannot earn a good score by passing two bands
-          comfortably while failing the third.
+          in equal parts. A design cannot earn a good score by clearing two bands
+          comfortably while exceeding the third. Tiers are LOW (70–100), MODERATE
+          (40–69) and HIGH (0–39). Higher score means more simulated headroom.
         </p>
         <p>
-          The <strong className="font-medium text-ink">confidence score</strong> is
-          the probability, under the model's own measured margin error, that each
-          band's verdict would survive that error — multiplied across bands, reduced
-          when the classifier and the regressor disagree, and capped below 100. The
-          cap is deliberate: the dominant error term is the gap between this
-          simulation and physical reality, and that term is not quantified anywhere in
-          this tool.
+          The <strong className="font-medium text-ink">± uncertainty</strong> is
+          the spread across an ensemble of five monotone-constrained margin
+          regressors (or a conservative mapping of held-out margin error if the
+          ensemble has not been fitted). It measures agreement with this tool's own
+          physics, not with accredited lab measurements.
         </p>
         <p>
-          The <strong className="font-medium text-ink">top risk factor</strong> comes
-          from exact tree SHAP values on the worst band's classifier, weighted by how
-          far each parameter already sits towards its own risky extreme. A parameter
-          already at its safest setting is not proposed for further change.
+          The <strong className="font-medium text-ink">Why this margin</strong> chart
+          uses exact tree SHAP (<Mono>pred_contribs</Mono>) from the design-only
+          margin regressor for the worst band. It explains this configuration,
+          including knobs already near a safe setting.{' '}
+          <strong className="font-medium text-ink">What to change next</strong> is a
+          separate list: remaining headroom only. The two can diverge. The tornado
+          chart is a local finite-difference of the risk score from here.
         </p>
       </Section>
 
@@ -272,13 +281,13 @@ export function Methodology({
         lead="The intended path from prototype to instrument."
       >
         <p>
-          The backend contains a documented extension point,{' '}
+          The backend contains a working extension point,{' '}
           <Mono>calibrate.py</Mono>, for fitting a residual correction from real
           chamber measurements: measured minus predicted margin, learned as a
-          function of the design parameters, then added to the simulator's output.
-          That structure means real data improves the tool without discarding the
-          physics or the monotonicity guarantees. It is intentionally left
-          unimplemented rather than faked.
+          function of the design parameters, then added to the simulator's output
+          with a clamp so it cannot invert a physics constraint. Until that CSV is
+          filled with chamber data, every figure remains relative to the simulator,
+          and the UI says so.
         </p>
       </Section>
 

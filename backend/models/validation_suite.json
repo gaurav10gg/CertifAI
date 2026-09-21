@@ -1,0 +1,146 @@
+{
+  "generated_at": "2026-09-16T13:48:53+00:00",
+  "artifact_version": "2.0.0",
+  "passed": true,
+  "headlines": {
+    "monotonicity": "Monotonicity verified across 200 randomized configurations: 100% consistent.",
+    "shap_additivity": "SHAP additivity verified: mean error 7.8e-6."
+  },
+  "monotonicity": {
+    "passed": true,
+    "headline": "Monotonicity verified across 200 randomized configurations: 100% consistent.",
+    "n_configs": 200,
+    "n_steps": 8,
+    "n_checks": 1200,
+    "n_violations": 0,
+    "consistent_percent": 100.0,
+    "per_feature": {
+      "switching_frequency_khz": {
+        "label": "Switching Frequency",
+        "checked": 200,
+        "violations": 0,
+        "risk_sign": 1
+      },
+      "dv_dt_v_per_us": {
+        "label": "Switching dv/dt",
+        "checked": 200,
+        "violations": 0,
+        "risk_sign": 1
+      },
+      "cable_length_m": {
+        "label": "Motor Cable Length",
+        "checked": 200,
+        "violations": 0,
+        "risk_sign": 1
+      },
+      "shielding_quality": {
+        "label": "Shielding Quality",
+        "checked": 200,
+        "violations": 0,
+        "risk_sign": -1
+      },
+      "load_current_a": {
+        "label": "Load Current",
+        "checked": 200,
+        "violations": 0,
+        "risk_sign": 1
+      },
+      "pwm_cm_penalty_db": {
+        "label": "PWM modulation",
+        "checked": 200,
+        "violations": 0,
+        "risk_sign": 1
+      }
+    },
+    "first_failures": [],
+    "note": "Model-space finite differences with spectral features held fixed. A pass means the trained trees respect the physics constraint vector on this sample. It is not a hardware validation."
+  },
+  "shap_additivity": {
+    "passed": true,
+    "headline": "SHAP additivity verified: mean error 7.8e-6.",
+    "n_designs": 200,
+    "n_checks": 600,
+    "mean_abs_error_db": 7.836139799716572e-06,
+    "max_abs_error_db": 5.1021575927734375e-05,
+    "mean_abs_error_display": "7.8e-6",
+    "max_abs_error_display": "5.1e-5",
+    "per_band": [
+      {
+        "band": "150 kHz - 500 kHz",
+        "n": 200,
+        "mean_abs_error_db": 7.550286827608943e-06,
+        "max_abs_error_db": 3.3915042877197266e-05
+      },
+      {
+        "band": "500 kHz - 5 MHz",
+        "n": 200,
+        "mean_abs_error_db": 7.125490228645504e-06,
+        "max_abs_error_db": 5.1021575927734375e-05
+      },
+      {
+        "band": "5 MHz - 30 MHz",
+        "n": 200,
+        "mean_abs_error_db": 8.83264234289527e-06,
+        "max_abs_error_db": 3.585219383239746e-05
+      }
+    ],
+    "note": "Exact tree SHAP (XGBoost pred_contribs) on the design-only margin regressors. The identity is sum(SHAP) + bias \u2248 predicted margin (dB). This is a check that the waterfall is an accounting of the model, not a hardware claim."
+  },
+  "simulation_consistency": {
+    "metric_semantics": "All accuracy figures are SIMULATION-CONSISTENCY scores: they measure agreement between the models and the physics simulation in simulate.py/features.py on held-out synthetic designs. They are NOT real-world accuracy against measured hardware, and must never be presented as such.",
+    "n_test": 750,
+    "design_only_ablation": {
+      "note": "Same models restricted to the six design parameters, with every spectral feature removed. The headline models see band_*_peak_dbuv, which is very nearly a sufficient statistic for the margin label, so their scores are high by construction. These ablation figures reflect the harder problem of predicting compliance from the design alone.",
+      "feature_names": [
+        "switching_frequency_khz",
+        "dv_dt_v_per_us",
+        "cable_length_m",
+        "shielding_quality",
+        "load_current_a",
+        "pwm_cm_penalty_db"
+      ],
+      "band_metrics": [
+        {
+          "band_key": "band_a",
+          "band_label": "150 kHz - 500 kHz",
+          "fail_rate": 0.3466666666666667,
+          "classifier_accuracy": 0.9653333333333334,
+          "classifier_balanced_accuracy": 0.964442700156986,
+          "classifier_roc_auc": 0.9963265306122449,
+          "margin_mae_db": 1.0592337691425073,
+          "margin_rmse_db": 1.4209693136046213,
+          "margin_r2": 0.9915093402636123,
+          "classifier_best_iteration": 599,
+          "regressor_best_iteration": 330
+        },
+        {
+          "band_key": "band_b",
+          "band_label": "500 kHz - 5 MHz",
+          "fail_rate": 0.36933333333333335,
+          "classifier_accuracy": 0.9706666666666667,
+          "classifier_balanced_accuracy": 0.9715083841521588,
+          "classifier_roc_auc": 0.9971454957602217,
+          "margin_mae_db": 1.2287398280120114,
+          "margin_rmse_db": 1.6271149853358806,
+          "margin_r2": 0.9891712018851735,
+          "classifier_best_iteration": 599,
+          "regressor_best_iteration": 330
+        },
+        {
+          "band_key": "band_c",
+          "band_label": "5 MHz - 30 MHz",
+          "fail_rate": 0.064,
+          "classifier_accuracy": 0.9773333333333334,
+          "classifier_balanced_accuracy": 0.9393696581196581,
+          "classifier_roc_auc": 0.9943613485280152,
+          "margin_mae_db": 1.8823987336500743,
+          "margin_rmse_db": 2.4825880801709803,
+          "margin_r2": 0.9715626202125509,
+          "classifier_best_iteration": 599,
+          "regressor_best_iteration": 311
+        }
+      ]
+    }
+  },
+  "note": "These checks prove the deployed models honour the physics constraint vector and that SHAP contributions add up to the prediction. They measure agreement with this tool's own simulator and with itself, not agreement with accredited lab measurements."
+}

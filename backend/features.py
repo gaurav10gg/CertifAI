@@ -26,8 +26,8 @@ EN 61000-6-4 broadly follows), and we add our own smooth tapers so the curve is
 continuous rather than stepped.
 
 Consequences that must be surfaced to the user:
-  * Absolute pass/fail verdicts from this tool are relative to OUR curve.
-  * A "pass" here is not a statement about EN 12016 conformity.
+  * Risk scores from this tool are relative to OUR curve.
+  * A LOW RISK result is not a statement about EN 12016 conformity.
   * The tapers at 150-500 kHz and 5-30 MHz are our additions, not standard.
 
 This assumption is mirrored verbatim on the application's Methodology page.
@@ -43,7 +43,7 @@ import numpy as np
 from scipy.ndimage import uniform_filter1d
 
 from simulate import (
-    NUMERIC_PARAMETER_KEYS,
+    ML_PARAMETER_KEYS,
     PARAMETER_RANGE_BY_KEY,
     SimulationResult,
 )
@@ -244,12 +244,39 @@ class SpectrumTrace:
 
 
 @dataclass
+class HarmonicPeak:
+    order: int
+    frequency_hz: float
+    amplitude: float
+    percent_of_fundamental: float
+
+
+@dataclass
+class PowerQualityReport:
+    """THD / harmonic summary for one current waveform.
+
+    Separate from the conducted-emission band analysis: this answers a power-
+    quality question (how distorted is the current?), not an EMC-limit question.
+    """
+
+    key: str
+    label: str
+    thd_percent: float
+    fundamental_hz: float
+    fundamental_amplitude: float
+    peaks: List[HarmonicPeak]
+    dominant_orders: Tuple[int, ...]
+    dominant_statement: str
+
+
+@dataclass
 class FeatureBundle:
     bands: List[BandAnalysis]
     spectrum: SpectrumTrace
     feature_vector: np.ndarray
     feature_names: Tuple[str, ...] = FEATURE_NAMES
     diagnostics: Dict[str, float] = field(default_factory=dict)
+    power_quality: List[PowerQualityReport] = field(default_factory=list)
 
     def band_by_key(self, key: str) -> BandAnalysis:
         for band in self.bands:
@@ -408,6 +435,109 @@ def _chart_trace(freqs: np.ndarray, trace_dbuv: np.ndarray) -> SpectrumTrace:
     )
 
 
+def _harmonic_peaks(
+    waveform: np.ndarray,
+    sample_rate_hz: float,
+    fundamental_hz: float,
+    n_orders: int = 40,
+    top_k: int = 5,
+) -> Tuple[float, float, List[HarmonicPeak]]:
+    """THD and the strongest harmonics of a periodic current.
+
+    THD is 100 · sqrt(sum I_h^2) / I_1 for h = 2..n_orders, using a Hann-windowed
+    FFT and the bin nearest each integer multiple of the fundamental. Returns
+    (thd_percent, fundamental_amplitude, top peaks excluding the DC bin).
+    """
+    n = waveform.size
+    window = np.hanning(n)
+    spectrum = np.fft.rfft(waveform * window)
+    freqs = np.fft.rfftfreq(n, d=1.0 / sample_rate_hz)
+    amplitude = (2.0 / (n * window.mean())) * np.abs(spectrum)
+    bin_hz = sample_rate_hz / n
+
+    def _near(freq: float) -> Tuple[int, float, float]:
+        centre = int(round(freq / max(bin_hz, 1e-12)))
+        lo = max(1, centre - 1)
+        hi = min(amplitude.size, centre + 2)
+        local = lo + int(np.argmax(amplitude[lo:hi]))
+        return local, float(freqs[local]), float(amplitude[local])
+
+    _, _, fund_amp = _near(fundamental_hz)
+    fund_amp = max(fund_amp, 1e-12)
+
+    peaks: List[HarmonicPeak] = []
+    harmonic_energy = 0.0
+    for order in range(1, n_orders + 1):
+        _, freq, amp = _near(order * fundamental_hz)
+        if order >= 2:
+            harmonic_energy += amp ** 2
+        peaks.append(HarmonicPeak(
+            order=order,
+            frequency_hz=freq,
+            amplitude=amp,
+            percent_of_fundamental=100.0 * amp / fund_amp,
+        ))
+
+    thd = 100.0 * float(np.sqrt(harmonic_energy)) / fund_amp
+    ranked = sorted(peaks[1:], key=lambda p: p.amplitude, reverse=True)
+    return thd, fund_amp, ranked[:top_k]
+
+
+def _dominant_statement(label: str, peaks: Sequence[HarmonicPeak]) -> Tuple[Tuple[int, ...], str]:
+    if not peaks:
+        return (), f"No resolved harmonics on {label}."
+    ranked = [p for p in peaks if p.order > 1]
+    if not ranked or ranked[0].percent_of_fundamental < 2.0:
+        return (), f"{label} is essentially sinusoidal."
+    top = [ranked[0]]
+    if (
+        len(ranked) > 1
+        and ranked[1].percent_of_fundamental >= max(1.5, 0.25 * ranked[0].percent_of_fundamental)
+    ):
+        top.append(ranked[1])
+    orders = tuple(p.order for p in top)
+    names = " and ".join(_ordinal(o) for o in orders)
+    if len(orders) == 1:
+        return orders, f"The {names} harmonic dominates {label} distortion."
+    return orders, f"{names} harmonics dominate {label} distortion."
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def analyse_power_quality(sim: SimulationResult) -> List[PowerQualityReport]:
+    """THD of motor current and input current on the long power-quality record."""
+    from simulate import MAINS_HZ
+
+    reports: List[PowerQualityReport] = []
+    pairs = (
+        ("motor_current", "motor current", sim.pq_motor_current_a),
+        ("input_current", "input current", sim.pq_input_current_a),
+    )
+    fs = sim.pq_sample_rate_hz
+    for key, label, waveform in pairs:
+        if waveform is None or waveform.size < 32:
+            continue
+        thd, fund_amp, peaks = _harmonic_peaks(waveform, fs, MAINS_HZ)
+        orders, statement = _dominant_statement(label, peaks)
+        reports.append(PowerQualityReport(
+            key=key,
+            label=label,
+            thd_percent=float(thd),
+            fundamental_hz=MAINS_HZ,
+            fundamental_amplitude=float(fund_amp),
+            peaks=peaks,
+            dominant_orders=orders,
+            dominant_statement=statement,
+        ))
+    return reports
+
+
 def extract_features(sim: SimulationResult) -> FeatureBundle:
     """Full analysis chain: FFT -> receiver emulation -> band features + margins."""
     freqs, amplitude = _amplitude_spectrum(sim.measured_segments, sim.sample_rate_hz)
@@ -422,7 +552,7 @@ def extract_features(sim: SimulationResult) -> FeatureBundle:
     bands = [_analyse_band(b, freqs, trace, amplitude) for b in EMC_BANDS]
 
     params = sim.parameters
-    design_values = [getattr(params, key) for key in NUMERIC_PARAMETER_KEYS]
+    design_values = [getattr(params, key) for key in ML_PARAMETER_KEYS]
     design_values.append(float(params.pwm_cm_penalty_db))
 
     band_values: List[float] = []
@@ -444,6 +574,7 @@ def extract_features(sim: SimulationResult) -> FeatureBundle:
         spectrum=_chart_trace(freqs, trace),
         feature_vector=feature_vector,
         diagnostics=dict(sim.diagnostics),
+        power_quality=analyse_power_quality(sim),
     )
 
 

@@ -2,8 +2,8 @@ import { MoonIcon, SunIcon } from './Icons'
 import type { ThemeMode } from '../theme/useTheme'
 
 /**
- * Header.tsx -- fixed application header: wordmark, methodology link, theme
- * toggle.
+ * Header.tsx -- fixed application header: wordmark, validation, methodology,
+ * theme toggle.
  *
  * The wordmark doubles as a home action once an assessment is under way. The
  * "Simulation" tag next to it is a permanent, quiet reminder of what this tool
@@ -14,12 +14,14 @@ export function Header({
   theme,
   onToggleTheme,
   onOpenMethodology,
+  onOpenValidation,
   onReset,
   canReset,
 }: {
   theme: ThemeMode
   onToggleTheme: () => void
   onOpenMethodology: () => void
+  onOpenValidation: () => void
   onReset: () => void
   canReset: boolean
 }) {
@@ -32,7 +34,7 @@ export function Header({
             onClick={canReset ? onReset : undefined}
             disabled={!canReset}
             className="group flex items-center gap-2.5 rounded disabled:cursor-default"
-            aria-label={canReset ? 'Start a new assessment' : 'CertifAI'}
+            aria-label={canReset ? 'Start a new assessment' : 'EMC Advisor'}
           >
             <Wordmark />
           </button>
@@ -40,11 +42,18 @@ export function Header({
             className="hidden rounded border border-line px-1.5 py-0.5 text-2xs
               font-medium uppercase tracking-label text-ink-faint sm:inline"
           >
-            Simulation
+            Risk indicator
           </span>
         </div>
 
         <nav className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onOpenValidation}
+            className="btn-ghost text-sm"
+          >
+            Validation
+          </button>
           <button
             type="button"
             onClick={onOpenMethodology}
@@ -111,7 +120,7 @@ function Wordmark() {
         />
       </svg>
       <span className="text-sm font-semibold tracking-tight text-ink">
-        CertifAI
+        EMC Advisor
       </span>
     </span>
   )

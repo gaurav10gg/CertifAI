@@ -54,6 +54,12 @@ voltage-source inverter driving a motor over a (possibly shielded) cable:
        domain so that the synthetic spectra have a realistic, non-deterministic
        baseline.
 
+    7. Alongside the common-mode EMC path, the same switching states drive four
+       additional power-stage waveforms used for the signal explorer and for
+       power-quality (THD) analysis: DC-link voltage, motor line-to-line voltage,
+       motor current (RL-filtered PWM), and rectifier input current. These are
+       *not* fed to the EMC risk models -- they answer a different question.
+
 Receiver dwell / segmentation
 ----------------------------
 A single short capture is *not* representative: the inverter's duty cycles vary
@@ -166,6 +172,29 @@ SHIELD_LOWPASS_MIN_HZ: Final[float] = 3.0e6  # cutoff with perfect shielding
 # Tuned with tools/sweep_check.py; see that script for the resulting margin
 # distribution across the parameter space.
 COUPLING_CALIBRATION: Final[float] = 5.0e-3
+
+# ---------------------------------------------------------------------------
+# Power-quality / multi-signal constants
+# ---------------------------------------------------------------------------
+# The EMC capture is 328 us at 200 MS/s -- too short to resolve 50 Hz THD.
+# A second, cheaper record at 200 kS/s over ~82 ms covers four fundamental
+# cycles (12 Hz bins) and still resolves a 16 kHz carrier and its sidebands.
+PQ_SAMPLE_RATE_HZ: Final[float] = 200e3
+PQ_N_SAMPLES: Final[int] = 2 ** 14
+EXPLORER_POINTS: Final[int] = 420
+MAINS_HZ: Final[float] = 50.0
+
+# Typical PM elevator-motor stator: a few millihenries. Held constant so that
+# current ripple falls with switching frequency exactly as L di/dt = v predicts,
+# rather than being confounded with a load-dependent inductance.
+MOTOR_L_H: Final[float] = 6.0e-3
+MOTOR_R_OHM: Final[float] = 0.45
+
+DC_LINK_CAP_F: Final[float] = 2200e-6
+# Maximum AC-line reactor used when input_filter_quality = 1.
+INPUT_FILTER_L_MAX_H: Final[float] = 3.5e-3
+# 6-pulse rectifier DC current corresponding to the motor RMS current.
+RECTIFIER_ID_SCALE: Final[float] = 1.35
 
 # Randomised noise floor, expressed as a level *per FFT bin* in dBuV.
 #
@@ -289,12 +318,13 @@ PARAMETER_RANGES: Final[Tuple[ParameterRange, ...]] = (
         key="switching_frequency_khz",
         label="Switching Frequency",
         unit="kHz",
-        minimum=2.0,
-        maximum=20.0,
+        minimum=3.0,
+        maximum=16.0,
         step=0.1,
         default=8.0,
         description=(
-            "IGBT/SiC carrier frequency. Higher carriers give smoother motor "
+            "IGBT/SiC carrier frequency, narrowed to the 3-16 kHz range used "
+            "in standard elevator VFDs. Higher carriers give smoother motor "
             "current and quieter acoustics, but place more switching "
             "transitions per second into the 150 kHz-30 MHz measurement range."
         ),
@@ -352,9 +382,36 @@ PARAMETER_RANGES: Final[Tuple[ParameterRange, ...]] = (
         description=(
             "RMS motor current at the assessed duty point. Larger currents "
             "raise circulating and return-path currents, lifting emission "
-            "amplitude across all bands."
+            "amplitude across all bands, and increase input-current THD."
         ),
     ),
+    ParameterRange(
+        key="input_filter_quality",
+        label="Input Filter",
+        unit="",
+        minimum=0.0,
+        maximum=1.0,
+        step=0.01,
+        default=0.45,
+        description=(
+            "Effectiveness of the AC line reactor / DC choke on the rectifier "
+            "input. Improves input-current THD (5th and 7th harmonics) but does "
+            "not change motor-cable conducted emissions, so it is excluded from "
+            "the EMC risk models."
+        ),
+    ),
+)
+
+# Design parameters that enter the EMC XGBoost models. input_filter_quality is
+# a power-quality lever only -- folding it into the EMC feature vector would
+# silently invalidate the trained artifacts without changing conducted-emission
+# physics.
+ML_PARAMETER_KEYS: Final[Tuple[str, ...]] = (
+    "switching_frequency_khz",
+    "dv_dt_v_per_us",
+    "cable_length_m",
+    "shielding_quality",
+    "load_current_a",
 )
 
 PARAMETER_RANGE_BY_KEY: Final[Dict[str, ParameterRange]] = {
@@ -368,7 +425,7 @@ NUMERIC_PARAMETER_KEYS: Final[Tuple[str, ...]] = tuple(
 
 @dataclass(frozen=True)
 class DeviceParameters:
-    """The six design-time inputs that fully determine a simulation."""
+    """The design-time inputs that fully determine a simulation."""
 
     switching_frequency_khz: float
     dv_dt_v_per_us: float
@@ -376,6 +433,7 @@ class DeviceParameters:
     shielding_quality: float
     load_current_a: float
     pwm_modulation_type: str = "SPWM"
+    input_filter_quality: float = 0.45
 
     def __post_init__(self) -> None:
         if self.pwm_modulation_type not in PWM_CM_PENALTY_DB:
@@ -401,6 +459,7 @@ class DeviceParameters:
             "shielding_quality": self.shielding_quality,
             "load_current_a": self.load_current_a,
             "pwm_modulation_type": self.pwm_modulation_type,
+            "input_filter_quality": self.input_filter_quality,
         }
 
     @property
@@ -418,14 +477,28 @@ class DeviceParameters:
         return int.from_bytes(digest[:4], "big")
 
 
+@dataclass(frozen=True)
+class SignalTrace:
+    """Down-sampled time-domain trace for the signal explorer and the PDF."""
+
+    key: str
+    label: str
+    unit: str
+    timescale: str
+    description: str
+    time_s: np.ndarray
+    values: np.ndarray
+
+
 @dataclass
 class SimulationResult:
     """Time-domain output of one simulation run.
 
     ``measured_segments`` has shape ``(N_SEGMENTS, N_SAMPLES)``; each row is one
     receiver dwell window at a different phase of the motor fundamental.
-    ``time_s`` and ``cm_voltage_v`` describe the first segment only and exist for
-    time-domain inspection.
+    ``time_s`` and ``cm_voltage_v`` describe the first HF segment. ``explorer``
+    holds the five down-sampled signals the dashboard plots. ``pq_*`` arrays are
+    the longer, slower records used for THD / harmonic analysis.
     """
 
     time_s: np.ndarray
@@ -434,6 +507,12 @@ class SimulationResult:
     sample_rate_hz: float
     parameters: DeviceParameters
     diagnostics: Dict[str, float] = field(default_factory=dict)
+    explorer: Tuple[SignalTrace, ...] = ()
+    pq_time_s: Optional[np.ndarray] = None
+    pq_sample_rate_hz: float = PQ_SAMPLE_RATE_HZ
+    pq_motor_current_a: Optional[np.ndarray] = None
+    pq_input_current_a: Optional[np.ndarray] = None
+    pq_dc_link_v: Optional[np.ndarray] = None
 
     @property
     def measured_voltage_v(self) -> np.ndarray:
@@ -532,29 +611,105 @@ def _causal_box_filter(x: np.ndarray, width: int) -> np.ndarray:
     return (cumulative - shifted) / width
 
 
-def _common_mode_voltage(
+def _leg_voltages(
     states: np.ndarray, params: DeviceParameters, dt: float
 ) -> np.ndarray:
-    """Trapezoidal leg voltages averaged into the common-mode voltage.
-
-    Rather than rendering each edge individually, we build the *derivative*
-    signal (a train of rectangular slew pulses of height dv/dt) and integrate
-    it. This is exact for a trapezoid and is fully vectorised over segments and
-    legs.
-
-    Returns shape ``(n_segments, n_samples)`` in volts.
-    """
+    """Trapezoidal pole voltages, shape ``(n_segments, 3, n_samples)`` in volts."""
     rise_time_s = V_DC_LINK / (params.dv_dt_v_per_us * 1e6)
     n_rise = max(1, int(round(rise_time_s / dt)))
 
-    # Signed impulses at each transition, in units of "steps of V_DC".
     transitions = np.zeros_like(states)
     transitions[..., 1:] = np.diff(states, axis=-1) / 2.0
-
-    # Spread each impulse over the slew window, then integrate to get voltage.
     spread = _causal_box_filter(transitions, n_rise)
-    legs = (np.cumsum(spread, axis=-1) - 0.5) * V_DC_LINK
-    return legs.mean(axis=1)
+    return (np.cumsum(spread, axis=-1) - 0.5) * V_DC_LINK
+
+
+def _common_mode_voltage(
+    states: np.ndarray, params: DeviceParameters, dt: float
+) -> np.ndarray:
+    """Trapezoidal leg voltages averaged into the common-mode voltage."""
+    return _leg_voltages(states, params, dt).mean(axis=1)
+
+
+def _rl_current(voltage_v: np.ndarray, dt: float, inductance_h: float,
+                resistance_ohm: float) -> np.ndarray:
+    """Causal RL current for ``v = L di/dt + R i``, last axis is time.
+
+    Exponential Euler is stable at both the 200 MS/s EMC rate and the 200 kS/s
+    power-quality rate. Current ripple amplitude falls as 1/(L · f_sw) for a
+    PWM voltage, which is the relationship the motor-current explorer must show.
+    """
+    decay = float(np.exp(-resistance_ohm * dt / max(inductance_h, 1e-9)))
+    gain = (1.0 - decay) / max(resistance_ohm, 1e-9)
+    return signal.lfilter([gain], [1.0, -decay], voltage_v, axis=-1)
+
+
+def _dc_link_voltage(
+    t: np.ndarray, params: DeviceParameters, states: np.ndarray
+) -> np.ndarray:
+    """DC-link voltage: 300 Hz rectifier ripple plus a 2·f_sw switching residual.
+
+    Ripple amplitude grows with load current (more charge pulled from C_dc per
+    PWM cycle) and the switching residual's frequency tracks the carrier, so
+    raising f_sw both raises the residual's frequency and shrinks its amplitude.
+    """
+    i_dc = params.load_current_a * RECTIFIER_ID_SCALE
+    omega_300 = 2.0 * np.pi * 6.0 * MAINS_HZ
+    ripple_300 = (i_dc / (DC_LINK_CAP_F * omega_300)) * np.sin(omega_300 * t)
+
+    f_sw = params.switching_frequency_khz * 1e3
+    # Three-phase inverter DC current has a strong component at twice the carrier.
+    residual_amp = i_dc / (DC_LINK_CAP_F * 2.0 * np.pi * max(f_sw, 1e3) * 2.0)
+    switching = states.mean(axis=1)  # (n_seg, n) in [-1, 1]
+    return V_DC_LINK + ripple_300 + residual_amp * switching
+
+
+def _input_current(
+    t: np.ndarray, params: DeviceParameters, dt: float, rng: np.random.Generator
+) -> np.ndarray:
+    """Mains-side phase current of a 6-pulse diode rectifier plus a line reactor.
+
+    A 6-pulse bridge produces the textbook odd-non-triplen series (5th, 7th,
+    11th, 13th, ...). Load current scales the amplitude; a small extra distortion
+    term grows with load so THD worsens at heavy duty, matching the typical VFD
+    observation that a larger DC-link ripple at high current feeds back into the
+    AC side. The line reactor (``input_filter_quality``) is a first-order lag
+    that preferentially attenuates those harmonics.
+    """
+    i_dc = params.load_current_a * RECTIFIER_ID_SCALE
+    theta = 2.0 * np.pi * MAINS_HZ * t
+    # Classical 6-pulse Fourier series, truncated at the 25th.
+    current = np.zeros_like(t, dtype=float)
+    two_root3_over_pi = 2.0 * np.sqrt(3.0) / np.pi
+    load_distortion = 1.0 + 0.35 * (params.load_current_a / LOAD_CURRENT_REF_A)
+    for harmonic in (1, 5, 7, 11, 13, 17, 19, 23, 25):
+        sign = 1.0 if harmonic % 4 == 1 else -1.0  # +1, -5, +7, -11, ...
+        weight = two_root3_over_pi * sign / harmonic
+        if harmonic > 1:
+            weight *= load_distortion
+        current = current + weight * np.cos(harmonic * theta)
+    current = current * i_dc
+
+    # Switching-frequency hash on the DC bus, coupled back through C_dc.
+    f_sw = params.switching_frequency_khz * 1e3
+    hf = 0.04 * i_dc * np.sin(2.0 * np.pi * 2.0 * f_sw * t)
+    hf *= (1.0 + 0.5 * rng.standard_normal(t.shape).clip(-1.0, 1.0) * 0.05)
+    current = current + hf
+
+    q = float(np.clip(params.input_filter_quality, 0.0, 1.0))
+    l_f = q * INPUT_FILTER_L_MAX_H
+    if l_f > 1e-6:
+        r_eq = 0.25
+        current = _rl_current(current * r_eq, dt, l_f, r_eq)
+    return current
+
+
+def _downsample_trace(time_s: np.ndarray, values: np.ndarray,
+                      n_points: int = EXPLORER_POINTS) -> Tuple[np.ndarray, np.ndarray]:
+    if values.size <= n_points:
+        return time_s, values
+    index = np.linspace(0, values.size - 1, n_points).astype(int)
+    return time_s[index], values[index]
 
 
 def _apply_cable_resonance(
@@ -690,7 +845,8 @@ def simulate_device(
 
     # 1-2. Trapezoidal leg voltages -> common-mode voltage.
     states = _switching_states(params, t, dt, rng)
-    v_cm = _common_mode_voltage(states, params, dt)
+    legs = _leg_voltages(states, params, dt)
+    v_cm = legs.mean(axis=1)
 
     # 4. Cable resonance / edge ringing.
     v_cm, f_res = _apply_cable_resonance(v_cm, params, sample_rate_hz)
@@ -713,10 +869,62 @@ def simulate_device(
     v_meas = i_cm * LISN_IMPEDANCE_OHM * COUPLING_CALIBRATION
     v_meas = v_meas + _noise_floor((n_segments, total), noise_floor_dbuv, rng)
 
+    measured = np.ascontiguousarray(v_meas[:, N_WARMUP_SAMPLES:])
+    time_s = np.arange(n_samples) * dt
+    cm_keep = v_cm[0, N_WARMUP_SAMPLES:]
+    legs_keep = legs[0, :, N_WARMUP_SAMPLES:]
+    motor_voltage = legs_keep[0] - legs_keep[1]
+
+    # Power-quality record: long enough to resolve 50 Hz THD, cheap enough to
+    # sit beside the EMC capture on every request.
+    pq_dt = 1.0 / PQ_SAMPLE_RATE_HZ
+    pq_t = np.arange(PQ_N_SAMPLES) * pq_dt
+    pq_rng = np.random.default_rng((params.deterministic_seed() if seed is None else seed) + 17)
+    pq_states = _switching_states(params, pq_t[None, :], pq_dt, pq_rng)[0]
+    pq_legs = _leg_voltages(pq_states[None, ...], params, pq_dt)[0]
+    pq_motor_current = _rl_current(pq_legs[0], pq_dt, MOTOR_L_H, MOTOR_R_OHM)
+    pq_dc_link = _dc_link_voltage(pq_t, params, pq_states[None, ...])[0]
+    pq_input = _input_current(pq_t, params, pq_dt, pq_rng)
+
+    def _trace(key: str, label: str, unit: str, timescale: str,
+               description: str, t_arr: np.ndarray, y: np.ndarray) -> SignalTrace:
+        ts, ys = _downsample_trace(t_arr, y)
+        return SignalTrace(key, label, unit, timescale, description, ts, ys)
+
+    explorer = (
+        _trace(
+            "dc_link", "DC-link voltage", "V", "fundamental",
+            "300 Hz rectifier ripple plus a 2×carrier residual. Ripple grows with "
+            "load current; the residual frequency tracks the switching frequency.",
+            pq_t, pq_dc_link,
+        ),
+        _trace(
+            "motor_voltage", "Motor line-to-line voltage", "V", "switching",
+            "PWM pole-to-pole voltage with trapezoidal edges set by dv/dt.",
+            time_s, motor_voltage,
+        ),
+        _trace(
+            "motor_current", "Motor phase current", "A", "fundamental",
+            "Stator current after RL filtering. Ripple amplitude falls as 1/(L·f_sw).",
+            pq_t, pq_motor_current,
+        ),
+        _trace(
+            "common_mode", "Common-mode voltage", "V", "switching",
+            "v_cm = (v_a + v_b + v_c)/3, the primary driver of conducted EMC.",
+            time_s, cm_keep,
+        ),
+        _trace(
+            "input_current", "Input current", "A", "fundamental",
+            "6-pulse rectifier phase current. 5th and 7th harmonics dominate; "
+            "a line reactor (input filter) attenuates them.",
+            pq_t, pq_input,
+        ),
+    )
+
     return SimulationResult(
-        time_s=np.arange(n_samples) * dt,
-        cm_voltage_v=v_cm[0, N_WARMUP_SAMPLES:],
-        measured_segments=np.ascontiguousarray(v_meas[:, N_WARMUP_SAMPLES:]),
+        time_s=time_s,
+        cm_voltage_v=cm_keep,
+        measured_segments=measured,
         sample_rate_hz=sample_rate_hz,
         parameters=params,
         diagnostics={
@@ -729,7 +937,15 @@ def simulate_device(
             "shield_cutoff_hz": shield_cutoff_hz,
             "noise_floor_dbuv": noise_floor_dbuv,
             "load_gain": load_gain,
+            "motor_l_mh": MOTOR_L_H * 1e3,
+            "input_filter_quality": float(params.input_filter_quality),
         },
+        explorer=explorer,
+        pq_time_s=pq_t,
+        pq_sample_rate_hz=PQ_SAMPLE_RATE_HZ,
+        pq_motor_current_a=pq_motor_current,
+        pq_input_current_a=pq_input,
+        pq_dc_link_v=pq_dc_link,
     )
 
 
@@ -755,6 +971,7 @@ def sample_random_parameters(rng: np.random.Generator) -> DeviceParameters:
         shielding_quality=_uniform("shielding_quality"),
         load_current_a=_log_uniform("load_current_a"),
         pwm_modulation_type=str(rng.choice(PWM_MODULATION_TYPES)),
+        input_filter_quality=_uniform("input_filter_quality"),
     )
 
 

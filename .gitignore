@@ -20,6 +20,10 @@ dist-ssr/
 backend/models/*
 !backend/models/certifai_models.joblib
 !backend/models/validation_report.json
+!backend/models/validation_suite.json
+!backend/models/margin_regressor_design_only_band_a.joblib
+!backend/models/margin_regressor_design_only_band_b.joblib
+!backend/models/margin_regressor_design_only_band_c.joblib
 
 # Generated assessment documents and scratch output
 *.pdf

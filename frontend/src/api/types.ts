@@ -15,6 +15,7 @@ export interface DeviceParameters {
   shielding_quality: number
   load_current_a: number
   pwm_modulation_type: PwmModulationType
+  input_filter_quality: number
 }
 
 export interface ParameterSpec {
@@ -50,6 +51,7 @@ export interface DevicesResponse {
   parameters: ParameterSpec[]
   pwm_modulation_types: PwmOption[]
   disclaimer: string
+  framing?: string
 }
 
 export interface BandResult {
@@ -122,6 +124,58 @@ export interface SimulationConsistency {
   } | null
 }
 
+export type RiskLevel = 'LOW' | 'MODERATE' | 'HIGH'
+
+export interface SignalTrace {
+  key: string
+  label: string
+  unit: string
+  timescale: string
+  description: string
+  time_ms: number[]
+  values: number[]
+}
+
+export interface HarmonicPeak {
+  order: number
+  frequency_hz: number
+  amplitude: number
+  percent_of_fundamental: number
+}
+
+export interface PowerQualityResult {
+  key: string
+  label: string
+  thd_percent: number
+  fundamental_hz: number
+  dominant_orders: number[]
+  dominant_statement: string
+  peaks: HarmonicPeak[]
+}
+
+export interface ShapRow {
+  parameter: string
+  label: string
+  shap: number
+  raises_risk: boolean
+}
+
+export interface SensitivityBar {
+  parameter: string
+  label: string
+  unit?: string
+  delta_score: number
+  direction?: string
+}
+
+export interface Countermeasure {
+  parameter: string
+  label: string
+  suggestion: string
+  current_value: number | string
+  suggested_value: number | string
+}
+
 export interface ParameterDisplayRow {
   key: string
   label: string
@@ -136,8 +190,16 @@ export interface PredictionResult {
   device_name: string
   parameters: DeviceParameters
   parameter_display: ParameterDisplayRow[]
-  verdict: 'PASS' | 'FAIL'
+  framing: string
+  risk_level: RiskLevel
+  risk_label: string
+  risk_copy: string
+  verdict: RiskLevel | 'PASS' | 'FAIL'
   compliance_score: number
+  risk_score: number
+  risk_score_low: number
+  risk_score_high: number
+  risk_score_plus_minus: number
   confidence_score: number
   confidence_label: string
   confidence_ceiling: number
@@ -145,6 +207,11 @@ export interface PredictionResult {
   bands: BandResult[]
   worst_band: string
   top_risk_factor: RiskFactor
+  shap: { band: string; note: string; contributions: ShapRow[]; unit?: string }
+  countermeasures: Countermeasure[]
+  sensitivity: { note: string; bars: SensitivityBar[] }
+  signals: SignalTrace[]
+  power_quality: PowerQualityResult[]
   spectrum: SpectrumTrace
   simulation_diagnostics: Record<string, number>
   model_info: {
@@ -152,6 +219,7 @@ export interface PredictionResult {
     feature_count: number
     monotone_constraints: number[]
     simulation_consistency: SimulationConsistency
+    ensemble_size?: number
   }
   limit_curve: {
     anchors_hz_dbuv: number[][]
@@ -160,6 +228,29 @@ export interface PredictionResult {
   }
   disclaimer: string
   disclaimer_long: string
+}
+
+export interface BandDiff {
+  key: string
+  label: string
+  baseline_margin_db: number
+  candidate_margin_db: number
+  delta_margin_db: number
+}
+
+export interface CompareResult {
+  baseline: PredictionResult
+  candidate: PredictionResult
+  delta_risk_score: number
+  band_diff: BandDiff[]
+}
+
+export interface AssessmentHistoryEntry {
+  score: number
+  plusMinus: number
+  level: RiskLevel
+  name: string
+  at: string
 }
 
 export interface FeatureSpecInfo {
@@ -238,6 +329,7 @@ export interface MethodologyResponse {
   }
   disclaimer: string
   disclaimer_long: string
+  framing?: string
 }
 
 export interface HealthResponse {
@@ -247,4 +339,104 @@ export interface HealthResponse {
   trained_at?: string
   n_training_designs?: number
   detail?: string
+}
+
+export interface ValidationFeatureRow {
+  label: string
+  checked: number
+  violations: number
+  risk_sign: number
+}
+
+export interface ValidationResponse {
+  generated_at: string
+  artifact_version: string
+  passed: boolean
+  headlines: {
+    monotonicity: string
+    shap_additivity: string
+  }
+  monotonicity: {
+    passed: boolean
+    headline: string
+    n_configs: number
+    n_steps: number
+    n_checks: number
+    n_violations: number
+    consistent_percent: number
+    per_feature: Record<string, ValidationFeatureRow>
+    note: string
+  }
+  shap_additivity: {
+    passed: boolean
+    headline: string
+    n_designs: number
+    n_checks: number
+    mean_abs_error_db: number
+    max_abs_error_db: number
+    mean_abs_error_display: string
+    max_abs_error_display: string
+    per_band: {
+      band: string
+      n: number
+      mean_abs_error_db: number
+      max_abs_error_db: number
+    }[]
+    note: string
+  }
+  simulation_consistency: {
+    metric_semantics: string | null
+    n_test: number | null
+    design_only_ablation: {
+      note?: string
+      band_metrics?: {
+        band_label: string
+        classifier_balanced_accuracy: number
+        margin_mae_db: number
+      }[]
+    }
+  }
+  note: string
+  suite_path?: string
+}
+
+export interface TradeoffPoint {
+  switching_frequency_khz: number
+  emc_risk_score: number
+  ripple_cost: number
+  acoustic_risk: number
+  ripple_peak_to_peak_a: number
+  predicted_margins_db: Record<string, number>
+  pareto_ripple: boolean
+  pareto_acoustic: boolean
+  is_current: boolean
+}
+
+export interface TradeoffResponse {
+  caption: string
+  formulas: {
+    ripple_cost: string
+    acoustic_risk: string
+    ripple_ref_a: number
+    l_motor_h: number
+    v_dc_v: number
+    audible_center_khz: number
+    audible_scale_khz: number
+  }
+  held: Omit<DeviceParameters, 'switching_frequency_khz'>
+  sweep: {
+    f_min_khz: number
+    f_max_khz: number
+    n_points: number
+    seed: number
+  }
+  points: TradeoffPoint[]
+  diagnostics: {
+    n_pareto_ripple: number
+    n_pareto_acoustic: number
+    ripple_trades_off_with_emc: boolean
+    acoustic_trades_off_with_emc: boolean
+    agrees_with_carrier_countermeasure: boolean
+    pareto_note: string
+  }
 }

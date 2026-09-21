@@ -1,5 +1,5 @@
 {
-  "artifact_version": "1.0.0",
+  "artifact_version": "2.0.0",
   "generated_at": "2026-09-12T07:23:00+00:00",
   "metric_semantics": "All accuracy figures are SIMULATION-CONSISTENCY scores: they measure agreement between the models and the physics simulation in simulate.py/features.py on held-out synthetic designs. They are NOT real-world accuracy against measured hardware, and must never be presented as such.",
   "n_samples": 5000,
@@ -235,5 +235,6 @@
     "python": "3.10.10",
     "xgboost": "2.1.3",
     "numpy": "2.2.1"
-  }
+  },
+  "ensemble_size": 5
 }

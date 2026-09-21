@@ -80,7 +80,8 @@ Usage
 -----
     python train_model.py                 # 5000 samples, all cores
     python train_model.py --n-samples 800 --jobs 4
-    python train_model.py --report-only   # re-print the saved validation report
+    python train_model.py --ensemble-only
+    python train_model.py --design-only   # persist six-parameter margin regressors
 """
 
 from __future__ import annotations
@@ -131,8 +132,12 @@ MODEL_DIR = Path(__file__).resolve().parent / "models"
 MODEL_PATH = MODEL_DIR / "certifai_models.joblib"
 REPORT_PATH = MODEL_DIR / "validation_report.json"
 DATASET_PATH = MODEL_DIR / "training_dataset.npz"
+DESIGN_ONLY_FEATURE_NAMES: Tuple[str, ...] = tuple(
+    spec.name for spec in DESIGN_FEATURE_SPECS
+)
 
-ARTIFACT_VERSION = "1.0.0"
+ARTIFACT_VERSION = "2.0.0"
+ENSEMBLE_SIZE = 5
 
 # Fraction of the dataset held out for validation, then for the final test split.
 VAL_FRACTION = 0.15
@@ -379,6 +384,8 @@ def design_only_ablation(
     x_val = scaler.transform(x_design[idx_val])
     x_test = scaler.transform(x_design[idx_test])
 
+    classifiers: List[xgb.XGBClassifier] = []
+    regressors: List[xgb.XGBRegressor] = []
     results: List[Dict[str, object]] = []
     for index, band in enumerate(EMC_BANDS):
         n_fail = max(int(y_fail[idx_train, index].sum()), 1)
@@ -401,6 +408,8 @@ def design_only_ablation(
             x_train, margins[idx_train, index],
             eval_set=[(x_val, margins[idx_val, index])], verbose=False,
         )
+        classifiers.append(classifier)
+        regressors.append(regressor)
 
         metrics = _band_metrics(
             index, classifier, regressor, x_test,
@@ -408,7 +417,13 @@ def design_only_ablation(
         )
         results.append(asdict(metrics))
 
-    return results
+    return {
+        "scaler": scaler,
+        "classifiers": classifiers,
+        "regressors": regressors,
+        "metrics": results,
+        "feature_names": list(DESIGN_ONLY_FEATURE_NAMES),
+    }
 
 
 def audit_seed_stability(
@@ -539,7 +554,7 @@ def train(n_samples: int, jobs: int, skip_stability: bool = False) -> Dict[str, 
     ablation = design_only_ablation(
         x_raw, margins, y_fail, idx_train, idx_val, idx_test
     )
-    for m in ablation:
+    for m in ablation["metrics"]:
         auc = m["classifier_roc_auc"]
         print(f"  {m['band_label']:18s} "
               f"acc={m['classifier_accuracy']:.3f} "
@@ -586,7 +601,7 @@ def train(n_samples: int, jobs: int, skip_stability: bool = False) -> Dict[str, 
                 "compliance from the design alone."
             ),
             "feature_names": [spec.name for spec in DESIGN_FEATURE_SPECS],
-            "band_metrics": ablation,
+            "band_metrics": ablation["metrics"],
         },
         "monotonicity_audit": monotonicity,
         "seed_stability": stability,
@@ -612,6 +627,10 @@ def train(n_samples: int, jobs: int, skip_stability: bool = False) -> Dict[str, 
         "scaler": scaler,
         "classifiers": classifiers,
         "regressors": regressors,
+        "ensemble_regressors": [],
+        "design_only_scaler": ablation["scaler"],
+        "design_only_regressors": ablation["regressors"],
+        "design_only_feature_names": list(DESIGN_ONLY_FEATURE_NAMES),
         "feature_names": list(FEATURE_NAMES),
         "band_keys": [b.key for b in EMC_BANDS],
         "monotone_constraints_risk": list(MONOTONE_CONSTRAINTS_RISK),
@@ -635,6 +654,7 @@ def train(n_samples: int, jobs: int, skip_stability: bool = False) -> Dict[str, 
     print(f"\nSaved models   -> {MODEL_PATH}")
     print(f"Saved report   -> {REPORT_PATH}")
     print(f"Saved dataset  -> {DATASET_PATH}")
+    _write_design_only_band_files(ablation["scaler"], ablation["regressors"])
     return report
 
 
@@ -686,6 +706,134 @@ def print_report(report: Dict[str, object]) -> None:
     print("=" * 74)
 
 
+def fit_ensemble_from_saved_dataset(n_members: int = ENSEMBLE_SIZE) -> None:
+    """Train a bootstrap ensemble of margin regressors on the saved dataset.
+
+    The primary classifier/regressor pair is left untouched so existing
+    simulation-consistency figures remain valid. The ensemble is stored under
+    ``ensemble_regressors`` as a list of length ``n_members``, each member itself
+    a list of per-band regressors.
+    """
+    if not DATASET_PATH.exists() or not MODEL_PATH.exists():
+        raise SystemExit("Need models/certifai_models.joblib and training_dataset.npz")
+
+    data = np.load(DATASET_PATH, allow_pickle=True)
+    x_raw = data["features"]
+    margins = data["margins"]
+    saved_names = [str(n) for n in data["feature_names"]]
+    if saved_names != list(FEATURE_NAMES):
+        raise SystemExit("Saved dataset feature schema does not match FEATURE_NAMES")
+
+    bundle = joblib.load(MODEL_PATH)
+    scaler = bundle["scaler"]
+    rng = np.random.default_rng(RANDOM_STATE + 99)
+    n = len(x_raw)
+    ensemble: List[List[xgb.XGBRegressor]] = []
+
+    light = dict(REGRESSOR_PARAMS)
+    light["n_estimators"] = 250
+    light["max_depth"] = 4
+    light["early_stopping_rounds"] = 20
+
+    print(f"Fitting {n_members} bootstrap margin ensembles on {n} saved designs...")
+    for member in range(n_members):
+        index = rng.integers(0, n, size=n)
+        hold = rng.choice(n, size=max(200, n // 8), replace=False)
+        x_train = scaler.transform(x_raw[index])
+        x_val = scaler.transform(x_raw[hold])
+        member_models: List[xgb.XGBRegressor] = []
+        for band_index in range(margins.shape[1]):
+            regressor = xgb.XGBRegressor(
+                **light,
+                monotone_constraints=xgboost_monotone_string(MONOTONE_CONSTRAINTS_MARGIN),
+                random_state=RANDOM_STATE + member * 17 + band_index,
+            )
+            regressor.fit(
+                x_train, margins[index, band_index],
+                eval_set=[(x_val, margins[hold, band_index])],
+                verbose=False,
+            )
+            member_models.append(regressor)
+        ensemble.append(member_models)
+        print(f"  member {member + 1}/{n_members} fitted")
+
+    bundle["ensemble_regressors"] = ensemble
+    bundle["artifact_version"] = ARTIFACT_VERSION
+    report = bundle.get("report") or {}
+    report["ensemble_size"] = n_members
+    report["artifact_version"] = ARTIFACT_VERSION
+    bundle["report"] = report
+    joblib.dump(bundle, MODEL_PATH, compress=3)
+    REPORT_PATH.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"Saved ensemble of {n_members} -> {MODEL_PATH}")
+
+
+def _write_design_only_band_files(
+    scaler: StandardScaler,
+    regressors: Sequence[xgb.XGBRegressor],
+) -> None:
+    """Write one inspectable joblib per band next to the main artifact."""
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    for band, regressor in zip(EMC_BANDS, regressors):
+        path = MODEL_DIR / f"margin_regressor_design_only_{band.key}.joblib"
+        joblib.dump(
+            {
+                "band_key": band.key,
+                "band_label": band.label,
+                "scaler": scaler,
+                "regressor": regressor,
+                "feature_names": list(DESIGN_ONLY_FEATURE_NAMES),
+            },
+            path,
+            compress=3,
+        )
+        print(f"Saved design-only margin regressor -> {path}")
+
+
+def fit_design_only_from_saved_dataset() -> None:
+    """Refit and persist the six-parameter margin regressors from training_dataset.npz.
+
+    The 18-feature models are left untouched. Same train/val/test split recipe as
+    ``train()`` so the ablation metrics stay comparable.
+    """
+    if not DATASET_PATH.exists() or not MODEL_PATH.exists():
+        raise SystemExit("Need models/certifai_models.joblib and training_dataset.npz")
+
+    data = np.load(DATASET_PATH, allow_pickle=True)
+    x_raw = data["features"]
+    margins = data["margins"]
+    saved_names = [str(n) for n in data["feature_names"]]
+    if saved_names != list(FEATURE_NAMES):
+        raise SystemExit("Saved dataset feature schema does not match FEATURE_NAMES")
+
+    y_fail = (margins <= 0.0).astype(int)
+    idx = np.arange(len(x_raw))
+    idx_fit, idx_test = train_test_split(
+        idx, test_size=TEST_FRACTION, random_state=RANDOM_STATE,
+        stratify=y_fail.any(axis=1),
+    )
+    idx_train, idx_val = train_test_split(
+        idx_fit, test_size=VAL_FRACTION / (1.0 - TEST_FRACTION),
+        random_state=RANDOM_STATE, stratify=y_fail[idx_fit].any(axis=1),
+    )
+
+    print("Fitting design-only margin regressors on the saved dataset...")
+    ablation = design_only_ablation(
+        x_raw, margins, y_fail, idx_train, idx_val, idx_test
+    )
+    for m in ablation["metrics"]:
+        print(f"  {m['band_label']:18s} MAE={m['margin_mae_db']:.2f} dB "
+              f"R2={m['margin_r2']:.4f}")
+
+    bundle = joblib.load(MODEL_PATH)
+    bundle["design_only_scaler"] = ablation["scaler"]
+    bundle["design_only_regressors"] = ablation["regressors"]
+    bundle["design_only_feature_names"] = list(DESIGN_ONLY_FEATURE_NAMES)
+    joblib.dump(bundle, MODEL_PATH, compress=3)
+    _write_design_only_band_files(ablation["scaler"], ablation["regressors"])
+    print(f"Updated {MODEL_PATH} with design_only_regressors")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-samples", type=int, default=5000)
@@ -694,6 +842,10 @@ def main() -> None:
                         help="skip the (slow) simulator-vs-surrogate stability audit")
     parser.add_argument("--report-only", action="store_true",
                         help="print the saved validation report and exit")
+    parser.add_argument("--ensemble-only", action="store_true",
+                        help="fit the uncertainty ensemble on the saved dataset")
+    parser.add_argument("--design-only", action="store_true",
+                        help="fit and save the six-parameter margin regressors")
     args = parser.parse_args()
 
     if args.report_only:
@@ -702,8 +854,17 @@ def main() -> None:
         print_report(json.loads(REPORT_PATH.read_text(encoding="utf-8")))
         return
 
+    if args.ensemble_only:
+        fit_ensemble_from_saved_dataset()
+        return
+
+    if args.design_only:
+        fit_design_only_from_saved_dataset()
+        return
+
     report = train(args.n_samples, args.jobs, skip_stability=args.skip_stability)
     print_report(report)
+    fit_ensemble_from_saved_dataset()
 
 
 if __name__ == "__main__":

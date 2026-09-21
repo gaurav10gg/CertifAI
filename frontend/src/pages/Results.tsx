@@ -1,20 +1,32 @@
-import type { PredictionResult } from '../api/types'
+import type {
+  AssessmentHistoryEntry,
+  DeviceProfile,
+  ParameterSpec,
+  PredictionResult,
+  TradeoffResponse,
+} from '../api/types'
 import { Card, Eyebrow } from '../components/Card'
 import { BandBreakdown } from '../components/BandBreakdown'
 import { CertificateButton } from '../components/CertificateButton'
+import { ComparePanel } from '../components/ComparePanel'
+import { CountermeasureList } from '../components/CountermeasureList'
 import { Disclaimer } from '../components/Disclaimer'
+import { HistorySparkline } from '../components/HistorySparkline'
 import { ArrowLeftIcon } from '../components/Icons'
-import { RiskCallout } from '../components/RiskCallout'
 import { ScoreDisplay } from '../components/ScoreDisplay'
+import { ShapWaterfall } from '../components/ShapWaterfall'
+import { SignalExplorer } from '../components/SignalExplorer'
 import { SpectrumChart } from '../components/SpectrumChart'
+import { ThdPanel } from '../components/ThdPanel'
+import { TornadoChart } from '../components/TornadoChart'
+import { TradeoffExplorer } from '../components/TradeoffExplorer'
 
 /**
- * Results.tsx -- stage three: the assessment.
+ * Results.tsx -- stage three: the risk assessment.
  *
- * Reading order is deliberate. Score and verdict first, because that is the
- * question the user asked. Then the spectrum, which is the evidence. Then the
- * per-band numbers. Then what to do about it. The disclaimer sits at the foot of
- * the page as a standing footnote and is repeated in the PDF.
+ * Framing sentence first, then the three-tier risk badge and score with
+ * uncertainty. Per-band margins stay visible underneath: the tier is a summary,
+ * not a replacement for the detail.
  */
 
 function formatTimestamp(iso: string): string {
@@ -28,23 +40,48 @@ function formatTimestamp(iso: string): string {
 
 export function Results({
   result,
+  history,
+  specs,
+  devices,
+  tradeoff,
+  tradeoffLoading,
+  tradeoffError,
+  applyingCarrier,
+  applyingFrequency,
+  applyError,
+  onApplyCarrier,
   onBack,
   onRestart,
   onOpenMethodology,
+  onOpenValidation,
 }: {
   result: PredictionResult
+  history: AssessmentHistoryEntry[]
+  specs: ParameterSpec[]
+  devices: DeviceProfile[]
+  tradeoff: TradeoffResponse | null
+  tradeoffLoading: boolean
+  tradeoffError: string | null
+  applyingCarrier: boolean
+  applyingFrequency: number | null
+  applyError: string | null
+  onApplyCarrier: (khz: number) => void
   onBack: () => void
   onRestart: () => void
   onOpenMethodology: () => void
+  onOpenValidation: () => void
 }) {
   const consistency = result.model_info.simulation_consistency
   const ablation = consistency.design_only_ablation
+  const framing =
+    result.framing ||
+    'This tool estimates EMC risk from simulated physics. It does not predict EN 12016 certification outcomes, which require accredited lab measurement.'
 
   return (
     <div className="space-y-6 motion-safe:animate-fade-up">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <Eyebrow>Step 3 · Virtual pre-compliance assessment</Eyebrow>
+          <Eyebrow>Step 3 · Pre-compliance risk indicator</Eyebrow>
           <h1 className="mt-2 text-display font-semibold tracking-tight text-ink">
             {result.device_name}
           </h1>
@@ -65,13 +102,24 @@ export function Results({
         </div>
       </header>
 
+      <p className="rounded-card border border-line border-l-2 border-l-ink bg-surface px-5 py-3.5 text-sm leading-relaxed text-ink">
+        {framing}
+      </p>
+
+      {history.length > 1 ? <HistorySparkline history={history} /> : null}
+
       <Card className="sm:p-8">
         <ScoreDisplay
-          score={result.compliance_score}
+          score={result.risk_score}
+          plusMinus={result.risk_score_plus_minus}
+          scoreLow={result.risk_score_low}
+          scoreHigh={result.risk_score_high}
+          riskLevel={result.risk_level}
+          riskLabel={result.risk_label}
+          riskCopy={result.risk_copy}
           confidence={result.confidence_score}
           confidenceLabel={result.confidence_label}
           confidenceNote={result.confidence_note}
-          verdict={result.verdict}
         />
       </Card>
 
@@ -80,15 +128,71 @@ export function Results({
       </Card>
 
       <Card className="sm:p-7">
-        <Eyebrow>Band breakdown</Eyebrow>
+        <Eyebrow>Band margins</Eyebrow>
         <p className="mt-1 mb-4 text-sm text-ink-muted">
-          Margin is headroom below the assumed limit at the band's worst
-          frequency. Negative means the band is predicted to fail.
+          Headroom below the assumed limit at each band's worst frequency.
+          Negative means the simulated emission exceeds that assumed curve. This
+          table is the detail; the risk tier above is only a summary.
         </p>
         <BandBreakdown bands={result.bands} />
       </Card>
 
-      <RiskCallout risk={result.top_risk_factor} />
+      {result.signals?.length ? (
+        <Card className="sm:p-7">
+          <SignalExplorer signals={result.signals} />
+        </Card>
+      ) : null}
+
+      {result.power_quality?.length ? (
+        <Card className="sm:p-7">
+          <ThdPanel reports={result.power_quality} />
+        </Card>
+      ) : null}
+
+      <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+        {result.shap?.contributions?.length ? (
+          <Card className="sm:p-7">
+            <ShapWaterfall
+              contributions={result.shap.contributions}
+              band={result.shap.band}
+            />
+          </Card>
+        ) : null}
+        {result.sensitivity?.bars?.length ? (
+          <Card className="sm:p-7">
+            <TornadoChart
+              bars={result.sensitivity.bars}
+              note={result.sensitivity.note}
+            />
+          </Card>
+        ) : null}
+      </div>
+
+      {result.shap?.contributions?.length && result.countermeasures?.length ? (
+        <p className="text-sm leading-relaxed text-ink-muted">
+          These lists can diverge: the chart explains why the current design sits
+          where it does, including factors already optimized (like shielding). The
+          recommendations below only suggest parameters with room left to improve.
+        </p>
+      ) : null}
+
+      {result.countermeasures?.length ? (
+        <Card className="sm:p-7">
+          <CountermeasureList measures={result.countermeasures} />
+        </Card>
+      ) : null}
+
+      <TradeoffExplorer
+        data={tradeoff}
+        loading={tradeoffLoading}
+        error={tradeoffError ?? applyError}
+        currentFrequency={result.parameters.switching_frequency_khz}
+        applying={applyingCarrier}
+        applyingFrequency={applyingFrequency}
+        onSelectFrequency={onApplyCarrier}
+      />
+
+      <ComparePanel baseline={result} specs={specs} devices={devices} />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1fr] lg:items-start">
         <Card>
@@ -136,19 +240,28 @@ export function Results({
           </dl>
 
           <p className="mt-3.5 text-2xs leading-relaxed text-ink-faint">
-            {ablation.note}
+            {ablation.note}{' '}
+            <button
+              type="button"
+              onClick={onOpenValidation}
+              className="rounded underline decoration-line-strong underline-offset-2
+                transition-colors hover:text-ink-muted hover:decoration-ink-muted"
+            >
+              Model validation
+            </button>
+            : monotonicity and SHAP identity, with the measured numbers.
           </p>
         </Card>
       </div>
 
       <Card className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between sm:p-7">
         <div className="max-w-xl">
-          <Eyebrow>Assessment document</Eyebrow>
+          <Eyebrow>Virtual EMC Pre-Compliance Report</Eyebrow>
           <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-            A two-page PDF containing the configuration, the score, the per-band
-            table, the spectrum plot and the stated assumptions. Recomputed
-            server-side from the parameters, so the document always matches the
-            model.
+            A PDF of the risk level, uncertainty band, spectrum, Why this
+            margin, what to change next, the design trade-off context, five
+            signal traces, and THD. Recomputed server-side from the
+            parameters, so the document always matches the model.
           </p>
         </div>
         <CertificateButton result={result} />

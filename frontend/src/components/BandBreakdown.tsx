@@ -2,11 +2,14 @@ import type { BandResult } from '../api/types'
 import { CheckIcon, CrossIcon } from './Icons'
 
 /**
- * BandBreakdown.tsx -- per-band pass/fail with a margin bar.
+ * BandBreakdown.tsx -- per-band margin to the assumed limit.
+ *
+ * Labels are Clear / Exceeds rather than pass / fail: this table is a risk
+ * detail against a synthetic curve, not a certification verdict.
  *
  * The bar is centred on the limit line: headroom extends right, exceedance
- * extends left. That makes "how close is this to failing" readable at a glance,
- * which a plain number column does not achieve.
+ * extends left. That makes "how close is this to the assumed limit" readable at
+ * a glance, which a plain number column does not achieve.
  *
  * Both the model's prediction and the simulator's own measurement are shown. They
  * normally agree to a fraction of a dB; showing both means a disagreement is
@@ -120,7 +123,7 @@ export function BandBreakdown({ bands }: { bands: BandResult[] }) {
                 ) : (
                   <CrossIcon className="h-3 w-3" />
                 )}
-                {passes ? 'Pass' : 'Fail'}
+                {passes ? 'Clear' : 'Exceeds'}
               </span>
             </div>
           </div>

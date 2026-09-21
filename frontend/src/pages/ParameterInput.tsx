@@ -13,16 +13,15 @@ import {
 import { SegmentedControl, Slider } from '../components/Slider'
 
 /**
- * ParameterInput.tsx -- stage two: the six design parameters.
+ * ParameterInput.tsx -- stage two: the design parameters.
  *
  * Bounds, steps and tooltip text all come from the backend
  * (PARAMETER_RANGES in simulate.py), so the UI cannot drift out of the range the
- * model was trained on. Every control carries a tooltip explaining what the
- * quantity physically represents and which direction increases emissions.
+ * model was trained on. Switching frequency is 3–16 kHz, standard VFD practice.
  */
 
 /** Percentage-style parameters are stored 0-1 but are far easier to read as %. */
-const PERCENT_KEYS = new Set(['shielding_quality'])
+const PERCENT_KEYS = new Set(['shielding_quality', 'input_filter_quality'])
 
 export function ParameterInput({
   specs,
@@ -62,8 +61,8 @@ export function ParameterInput({
           {isCustom ? 'Custom configuration' : deviceName}
         </h1>
         <p className="mt-3 text-base leading-relaxed text-ink-muted">
-          These six parameters drive the physics simulation. Hover any label to see
-          what the quantity represents and how it affects conducted emissions.
+          These parameters drive the physics simulation. Hover any label to see
+          what the quantity represents. Switching frequency is limited to 3–16 kHz.
         </p>
       </header>
 
@@ -115,11 +114,12 @@ export function ParameterInput({
 
         <div className="space-y-4 lg:sticky lg:top-20">
           <Card>
-            <Eyebrow>Run the assessment</Eyebrow>
+            <Eyebrow>Run the risk assessment</Eyebrow>
             <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-              The backend synthesises the switching waveform, applies a
-              receiver-emulated FFT across the three EMC bands, and evaluates the
-              monotonically constrained models. This takes about a second.
+              The backend synthesises five waveforms, applies a receiver-emulated
+              FFT across the three EMC bands, and evaluates the monotonically
+              constrained models. This takes about a second. The result is a
+              pre-compliance risk indicator, not a certification prediction.
             </p>
 
             <button
@@ -135,7 +135,7 @@ export function ParameterInput({
                 </>
               ) : (
                 <>
-                  Run compliance check
+                  Run risk assessment
                   <ArrowRightIcon className="h-4 w-4" />
                 </>
               )}
@@ -167,14 +167,16 @@ export function ParameterInput({
             <ul className="mt-3 space-y-2.5 text-xs leading-relaxed text-ink-muted">
               <li>
                 Conducted common-mode emissions on the motor cable, measured at a
-                50 Ω LISN with a 9 kHz resolution bandwidth.
+                50 Ω LISN with a 9 kHz resolution bandwidth — the EMC risk signal.
               </li>
               <li>
-                Three bands: 150 kHz – 500 kHz, 500 kHz – 5 MHz and 5 MHz – 30 MHz.
+                Motor and input current THD as a separate power-quality readout.
+                Input filter quality moves THD, not the emission bands.
               </li>
               <li>
                 Compared against a synthetic EN 12016-style limit curve. The curve
-                is an assumption, not published data.
+                is an assumption, not published data, and this is not a
+                certification prediction.
               </li>
             </ul>
           </Card>

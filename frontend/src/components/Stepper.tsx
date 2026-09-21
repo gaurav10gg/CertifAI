@@ -13,7 +13,7 @@ export type StepId = 'select' | 'configure' | 'results'
 const STEPS: { id: StepId; label: string }[] = [
   { id: 'select', label: 'Select device' },
   { id: 'configure', label: 'Set parameters' },
-  { id: 'results', label: 'Review results' },
+  { id: 'results', label: 'Review risk' },
 ]
 
 export function Stepper({

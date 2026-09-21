@@ -23,6 +23,7 @@ BASELINE = {
     "shielding_quality": 0.91,
     "load_current_a": 140.0,
     "pwm_modulation_type": "SVPWM",
+    "input_filter_quality": 0.45,
 }
 
 
@@ -38,15 +39,15 @@ def predict(parameters: dict) -> dict:
 
 def sweep(key: str, values: tuple[float, ...]) -> None:
     print(f"\n{key}")
-    print(f"{'value':>10}  {'score':>5}  verdict  conf  margins (dB, band A/B/C)")
+    print(f"{'value':>10}  {'score':>5}  risk     conf  margins (dB, band A/B/C)")
     for value in values:
         result = predict({**BASELINE, key: value})
         margins = "  ".join(
             f"{band['predicted_margin_db']:+6.1f}" for band in result["bands"]
         )
         print(
-            f"{value:>10.2f}  {result['compliance_score']:5.1f}  "
-            f"{result['verdict']:<7}  {result['confidence_score']:4.0f}  {margins}"
+            f"{value:>10.2f}  {result.get('risk_score', result['compliance_score']):5.1f}  "
+            f"{str(result.get('risk_level', result['verdict'])):<7}  {result['confidence_score']:4.0f}  {margins}"
         )
 
 
@@ -58,7 +59,7 @@ def main() -> None:
     sweep("shielding_quality", (0.0, 0.3, 0.6, 0.91, 1.0))
     sweep("dv_dt_v_per_us", (500.0, 2000.0, 6000.0, 10000.0))
     sweep("load_current_a", (5.0, 40.0, 140.0, 200.0))
-    sweep("switching_frequency_khz", (2.0, 8.0, 12.0, 20.0))
+    sweep("switching_frequency_khz", (3.0, 8.0, 12.0, 16.0))
 
 
 if __name__ == "__main__":

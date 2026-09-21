@@ -38,5 +38,5 @@ echo "Starting frontend on http://localhost:5173 ..."
 (cd "$root/frontend" && npm run dev) &
 
 echo
-echo "CertifAI is starting. Open http://localhost:5173"
+echo "EMC Advisor is starting. Open http://localhost:5173"
 wait

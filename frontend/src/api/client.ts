@@ -1,9 +1,12 @@
 import type {
+  CompareResult,
   DeviceParameters,
   DevicesResponse,
   HealthResponse,
   MethodologyResponse,
   PredictionResult,
+  TradeoffResponse,
+  ValidationResponse,
 } from './types'
 
 /**
@@ -37,7 +40,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     })
   } catch {
     throw new ApiError(
-      'Could not reach the CertifAI backend. Confirm it is running on port 8000.',
+      'Could not reach the EMC Advisor backend. Confirm it is running on port 8000.',
       0,
     )
   }
@@ -81,12 +84,40 @@ export function fetchMethodology(): Promise<MethodologyResponse> {
   return request<MethodologyResponse>('/methodology')
 }
 
+export function fetchValidation(): Promise<ValidationResponse> {
+  return request<ValidationResponse>('/validation')
+}
+
 export function runPrediction(payload: {
   parameters: DeviceParameters
   device_id?: string | null
   device_name?: string | null
 }): Promise<PredictionResult> {
   return request<PredictionResult>('/predict', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function fetchTradeoff(payload: {
+  parameters: DeviceParameters
+  f_min_khz?: number
+  f_max_khz?: number
+  n_points?: number
+}): Promise<TradeoffResponse> {
+  return request<TradeoffResponse>('/tradeoff', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function comparePredictions(payload: {
+  baseline: DeviceParameters
+  candidate: DeviceParameters
+  baseline_name?: string
+  candidate_name?: string
+}): Promise<CompareResult> {
+  return request<CompareResult>('/compare', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -116,7 +147,7 @@ export async function downloadCertificate(payload: {
   const blob = await response.blob()
   const filename =
     parseFilename(response.headers.get('Content-Disposition')) ??
-    'certifai-pre-compliance-assessment.pdf'
+    'emc-advisor-pre-compliance-report.pdf'
 
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')

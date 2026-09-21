@@ -1,17 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   ApiError,
   fetchDevices,
   fetchMethodology,
+  fetchTradeoff,
+  fetchValidation,
   runPrediction,
 } from './api/client'
 import type {
+  AssessmentHistoryEntry,
   DeviceParameters,
   DeviceProfile,
   DevicesResponse,
   MethodologyResponse,
   PredictionResult,
+  TradeoffResponse,
+  ValidationResponse,
 } from './api/types'
 import { Disclaimer } from './components/Disclaimer'
 import { Header } from './components/Header'
@@ -19,35 +24,46 @@ import { Modal } from './components/Modal'
 import { Stepper, type StepId } from './components/Stepper'
 import { DeviceSelect } from './pages/DeviceSelect'
 import { Methodology } from './pages/Methodology'
+import { ModelValidation } from './pages/ModelValidation'
 import { ParameterInput } from './pages/ParameterInput'
 import { Results } from './pages/Results'
 import { useTheme } from './theme/useTheme'
 
+function heldParameterKey(parameters: DeviceParameters): string {
+  const { switching_frequency_khz: _carrier, ...held } = parameters
+  return JSON.stringify(held)
+}
+
 /**
  * App.tsx -- flow state and data loading.
  *
- * Three stages, held in local state rather than a router: the flow is short and
- * linear, and a deep link to a results page would be meaningless without the
- * parameters that produced it. The user may step backwards freely; results are
- * kept so returning from a parameter edit does not lose the previous assessment.
- *
- * Methodology is a sheet rather than a stage, so it can be read at any point
- * without abandoning work in progress.
+ * Three stages, held in local state rather than a router. Session history of
+ * the last three assessments is kept for the "What changed" sparkline.
  */
 
-/** Mid-range starting point for a custom configuration, built from the backend specs. */
 function defaultParameters(devices: DevicesResponse): DeviceParameters {
   const numeric = Object.fromEntries(
     devices.parameters.map((spec) => [spec.key, spec.default]),
   ) as Omit<DeviceParameters, 'pwm_modulation_type'>
 
-  return { ...numeric, pwm_modulation_type: 'SPWM' }
+  return {
+    ...numeric,
+    pwm_modulation_type: 'SPWM',
+    input_filter_quality: numeric.input_filter_quality ?? 0.45,
+  }
 }
 
 function sameParameters(a: DeviceParameters, b: DeviceParameters): boolean {
   return (Object.keys(a) as (keyof DeviceParameters)[]).every(
     (key) => a[key] === b[key],
   )
+}
+
+function withFilterDefault(parameters: DeviceParameters): DeviceParameters {
+  return {
+    ...parameters,
+    input_filter_quality: parameters.input_filter_quality ?? 0.45,
+  }
 }
 
 export default function App() {
@@ -62,15 +78,28 @@ export default function App() {
   const [parameters, setParameters] = useState<DeviceParameters | null>(null)
 
   const [result, setResult] = useState<PredictionResult | null>(null)
+  const [history, setHistory] = useState<AssessmentHistoryEntry[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [predictError, setPredictError] = useState<string | null>(null)
+
+  const [tradeoff, setTradeoff] = useState<TradeoffResponse | null>(null)
+  const [tradeoffLoading, setTradeoffLoading] = useState(false)
+  const [tradeoffError, setTradeoffError] = useState<string | null>(null)
+  const tradeoffKeyRef = useRef<string | null>(null)
+  const tradeoffRequestRef = useRef(0)
+  const [applyingCarrier, setApplyingCarrier] = useState(false)
+  const [applyingFrequency, setApplyingFrequency] = useState<number | null>(null)
 
   const [methodologyOpen, setMethodologyOpen] = useState(false)
   const [methodology, setMethodology] = useState<MethodologyResponse | null>(null)
   const [methodologyLoading, setMethodologyLoading] = useState(false)
   const [methodologyError, setMethodologyError] = useState<string | null>(null)
 
-  // Device catalogue and parameter specs. Everything downstream depends on this.
+  const [validationOpen, setValidationOpen] = useState(false)
+  const [validation, setValidation] = useState<ValidationResponse | null>(null)
+  const [validationLoading, setValidationLoading] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
+
   useEffect(() => {
     let cancelled = false
     fetchDevices()
@@ -82,7 +111,7 @@ export default function App() {
         setCatalogueError(
           caught instanceof ApiError
             ? caught.message
-            : 'Could not reach the CertifAI backend. Is it running on port 8000?',
+            : 'Could not reach the EMC Advisor backend. Is it running on port 8000?',
         )
       })
     return () => {
@@ -90,8 +119,6 @@ export default function App() {
     }
   }, [])
 
-  // Methodology is fetched lazily, on the first open, from the event that opens
-  // it rather than from an effect watching the open flag.
   const openMethodology = useCallback(() => {
     setMethodologyOpen(true)
     if (methodology || methodologyLoading) return
@@ -110,6 +137,24 @@ export default function App() {
       .finally(() => setMethodologyLoading(false))
   }, [methodology, methodologyLoading])
 
+  const openValidation = useCallback(() => {
+    setValidationOpen(true)
+    if (validation || validationLoading) return
+
+    setValidationLoading(true)
+    setValidationError(null)
+    fetchValidation()
+      .then(setValidation)
+      .catch((caught: unknown) =>
+        setValidationError(
+          caught instanceof ApiError
+            ? caught.message
+            : 'Could not load the validation suite.',
+        ),
+      )
+      .finally(() => setValidationLoading(false))
+  }, [validation, validationLoading])
+
   const advance = useCallback((next: StepId) => {
     const order: StepId[] = ['select', 'configure', 'results']
     setStep(next)
@@ -118,11 +163,48 @@ export default function App() {
     )
   }, [])
 
+  const clearTradeoff = () => {
+    tradeoffKeyRef.current = null
+    tradeoffRequestRef.current += 1
+    setTradeoff(null)
+    setTradeoffLoading(false)
+    setTradeoffError(null)
+  }
+
+  const requestTradeoff = (params: DeviceParameters) => {
+    const next = withFilterDefault(params)
+    const key = heldParameterKey(next)
+    if (key === tradeoffKeyRef.current) return
+    tradeoffKeyRef.current = key
+    const requestId = ++tradeoffRequestRef.current
+    setTradeoffLoading(true)
+    setTradeoffError(null)
+    fetchTradeoff({ parameters: next })
+      .then((data) => {
+        if (requestId !== tradeoffRequestRef.current) return
+        setTradeoff(data)
+      })
+      .catch((caught: unknown) => {
+        if (requestId !== tradeoffRequestRef.current) return
+        setTradeoff(null)
+        setTradeoffError(
+          caught instanceof ApiError
+            ? caught.message
+            : 'The trade-off sweep failed. Please try again.',
+        )
+      })
+      .finally(() => {
+        if (requestId !== tradeoffRequestRef.current) return
+        setTradeoffLoading(false)
+      })
+  }
+
   const onSelectDevice = (profile: DeviceProfile) => {
     setDevice(profile)
-    setParameters(profile.parameters)
+    setParameters(withFilterDefault(profile.parameters))
     setResult(null)
     setPredictError(null)
+    clearTradeoff()
     advance('configure')
   }
 
@@ -132,6 +214,7 @@ export default function App() {
     setParameters(defaultParameters(catalogue))
     setResult(null)
     setPredictError(null)
+    clearTradeoff()
     advance('configure')
   }
 
@@ -142,29 +225,84 @@ export default function App() {
     setParameters(null)
     setResult(null)
     setPredictError(null)
+    clearTradeoff()
+  }
+
+  const recordHistory = (prediction: PredictionResult) => {
+    setHistory((current) =>
+      [
+        {
+          score: prediction.risk_score,
+          plusMinus: prediction.risk_score_plus_minus,
+          level: prediction.risk_level,
+          name: prediction.device_name,
+          at: prediction.generated_at,
+        },
+        ...current,
+      ].slice(0, 3),
+    )
   }
 
   const onSubmit = async () => {
     if (!parameters) return
     setSubmitting(true)
     setPredictError(null)
+    requestTradeoff(parameters)
     try {
       const prediction = await runPrediction({
-        parameters,
+        parameters: withFilterDefault(parameters),
         device_id: device?.id ?? null,
         device_name: device?.name,
       })
       setResult(prediction)
+      recordHistory(prediction)
       advance('results')
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (caught) {
       setPredictError(
         caught instanceof ApiError
           ? caught.message
-          : 'The compliance check failed. Please try again.',
+          : 'The risk assessment failed. Please try again.',
       )
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const onApplyCarrier = async (khz: number) => {
+    if (!parameters || applyingCarrier) return
+    const next = {
+      ...withFilterDefault(parameters),
+      switching_frequency_khz: khz,
+    }
+    if (
+      result &&
+      Math.abs(next.switching_frequency_khz - result.parameters.switching_frequency_khz) <
+        0.05
+    ) {
+      return
+    }
+    setParameters(next)
+    setApplyingCarrier(true)
+    setApplyingFrequency(khz)
+    setPredictError(null)
+    try {
+      const prediction = await runPrediction({
+        parameters: next,
+        device_id: device?.id ?? null,
+        device_name: device?.name,
+      })
+      setResult(prediction)
+      recordHistory(prediction)
+    } catch (caught) {
+      setPredictError(
+        caught instanceof ApiError
+          ? caught.message
+          : 'The risk assessment failed. Please try again.',
+      )
+    } finally {
+      setApplyingCarrier(false)
+      setApplyingFrequency(null)
     }
   }
 
@@ -172,7 +310,7 @@ export default function App() {
     () =>
       device !== null &&
       parameters !== null &&
-      !sameParameters(device.parameters, parameters),
+      !sameParameters(withFilterDefault(device.parameters), parameters),
     [device, parameters],
   )
 
@@ -182,6 +320,7 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggle}
         onOpenMethodology={openMethodology}
+        onOpenValidation={openValidation}
         onReset={onRestart}
         canReset={step !== 'select'}
       />
@@ -192,7 +331,6 @@ export default function App() {
             current={step}
             furthest={furthest}
             onNavigate={(target) => {
-              // Results are only reachable again if an assessment exists.
               if (target === 'results' && !result) return
               setStep(target)
             }}
@@ -219,7 +357,9 @@ export default function App() {
             onChange={setParameters}
             onBack={() => setStep('select')}
             onSubmit={onSubmit}
-            onResetToPreset={() => device && setParameters(device.parameters)}
+            onResetToPreset={() =>
+              device && setParameters(withFilterDefault(device.parameters))
+            }
             dirty={dirty}
             submitting={submitting}
             error={predictError}
@@ -227,9 +367,20 @@ export default function App() {
         ) : result ? (
           <Results
             result={result}
+            history={history}
+            specs={catalogue.parameters}
+            devices={catalogue.devices}
+            tradeoff={tradeoff}
+            tradeoffLoading={tradeoffLoading}
+            tradeoffError={tradeoffError}
+            applyingCarrier={applyingCarrier}
+            applyingFrequency={applyingFrequency}
+            applyError={predictError}
+            onApplyCarrier={onApplyCarrier}
             onBack={() => setStep('configure')}
             onRestart={onRestart}
             onOpenMethodology={openMethodology}
+            onOpenValidation={openValidation}
           />
         ) : null}
 
@@ -245,12 +396,24 @@ export default function App() {
       <Modal
         open={methodologyOpen}
         onClose={() => setMethodologyOpen(false)}
-        title="How CertifAI works"
+        title="How EMC Advisor works"
       >
         <Methodology
           data={methodology}
           loading={methodologyLoading}
           error={methodologyError}
+        />
+      </Modal>
+
+      <Modal
+        open={validationOpen}
+        onClose={() => setValidationOpen(false)}
+        title="Model validation"
+      >
+        <ModelValidation
+          data={validation}
+          loading={validationLoading}
+          error={validationError}
         />
       </Modal>
     </div>
