@@ -9,6 +9,7 @@ Endpoints
     GET  /api/validation       Phase 7 suite: monotonicity + SHAP additivity
     POST /api/predict          run an assessment for a device configuration
     POST /api/tradeoff         sweep switching frequency for EMC vs ripple/acoustic
+    POST /api/schematic/import read a schematic PDF and pre-fill parameters
     POST /api/certificate      render an assessment result as a PDF
 
 Design notes
@@ -29,7 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -65,6 +66,7 @@ from tradeoff import (
     F_SW_MIN_KHZ,
     run_tradeoff,
 )
+from schematic_import import analyse as analyse_schematic
 from validation import SUITE_PATH, load_suite
 from simulate import (
     N_SEGMENTS,
@@ -98,6 +100,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost:5174", "http://127.0.0.1:5174",
+        "http://localhost:5176", "http://127.0.0.1:5176",
+        "http://localhost:5177", "http://127.0.0.1:5177",
         "http://localhost:4173", "http://127.0.0.1:4173",
     ],
     allow_credentials=False,
@@ -460,6 +464,35 @@ def sensitivity(request: PredictRequest) -> Dict[str, Any]:
         return sensitivity_analysis(request.parameters.to_domain())
     except ModelNotTrainedError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+MAX_SCHEMATIC_BYTES = 25 * 1024 * 1024
+
+
+@app.post("/api/schematic/import")
+async def import_schematic(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Read a schematic PDF and return the parameters it can pre-fill.
+
+    Rule-based on the PDF text layer. Returns the bill of materials, the
+    EMC-relevant findings with their refdes, a partial parameter dict with a
+    confidence and source per field, and the fields still needed from the
+    user (carrier, cable, shielding, load). Never returns a score directly:
+    the user reviews the pre-fill, completes it, and runs the normal predict.
+    """
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=415, detail="Upload a PDF schematic export.")
+    data = await file.read()
+    if len(data) > MAX_SCHEMATIC_BYTES:
+        raise HTTPException(status_code=413, detail="PDF larger than 25 MB.")
+    try:
+        report = analyse_schematic(data)
+    except Exception as error:  # pragma: no cover - parser failure
+        logger.exception("schematic import failed")
+        raise HTTPException(
+            status_code=422, detail=f"Could not read this PDF: {error}"
+        ) from error
+    report["filename"] = file.filename
+    return report
 
 
 @app.post("/api/certificate")

@@ -5,6 +5,7 @@ import type {
   ParameterSpec,
   PwmModulationType,
   PwmOption,
+  SchematicImportResult,
   SwitchingDeviceOption,
   SwitchingDeviceType,
 } from '../api/types'
@@ -14,6 +15,7 @@ import {
   ArrowRightIcon,
   SpinnerIcon,
 } from '../components/Icons'
+import { SchematicFindings } from '../components/SchematicFindings'
 import { SegmentedControl, Slider } from '../components/Slider'
 
 /**
@@ -56,6 +58,7 @@ export function ParameterInput({
   dirty,
   submitting,
   error,
+  schematic = null,
 }: {
   specs: ParameterSpec[]
   pwmOptions: PwmOption[]
@@ -70,6 +73,7 @@ export function ParameterInput({
   dirty: boolean
   submitting: boolean
   error: string | null
+  schematic?: SchematicImportResult | null
 }) {
   const setNumeric = (key: ParameterSpec['key'], value: number) =>
     onChange({ ...parameters, [key]: value })
@@ -89,10 +93,17 @@ export function ParameterInput({
           {isCustom ? 'Custom configuration' : deviceName}
         </h1>
         <p className="mt-3 text-base leading-relaxed text-ink-muted">
-          These parameters drive the physics simulation. Hover any label to see
-          what the quantity represents. Switching frequency is limited to 3–16 kHz.
+          {schematic
+            ? 'The hardware below was read from your schematic. Fill in the four installation and firmware values it cannot carry, then run the assessment.'
+            : 'These parameters drive the physics simulation. Hover any label to see what the quantity represents. Switching frequency is limited to 3–16 kHz.'}
         </p>
       </header>
+
+      {schematic ? (
+        <div className="mt-9">
+          <SchematicFindings report={schematic} specs={specs} />
+        </div>
+      ) : null}
 
       <div className="mt-9 grid gap-6 lg:grid-cols-[1.55fr_1fr] lg:items-start">
         <div className="space-y-6">
@@ -108,16 +119,16 @@ export function ParameterInput({
             const isPercent = PERCENT_KEYS.has(spec.key)
             const isChoke = spec.key === 'cm_choke_effectiveness'
             const scale = isPercent ? 100 : isChoke ? CM_CHOKE_MAX_MH : 1
+            const needsYou = Boolean(schematic?.missing.includes(spec.key))
+            const baseLabel = isPercent
+              ? `${spec.label} (%)`
+              : isChoke
+                ? 'Common-mode choke'
+                : spec.label
             return (
               <Slider
                 key={spec.key}
-                label={
-                  isPercent
-                    ? `${spec.label} (%)`
-                    : isChoke
-                      ? 'Common-mode choke'
-                      : spec.label
-                }
+                label={needsYou ? `${baseLabel} · needed` : baseLabel}
                 unit={isPercent ? '%' : isChoke ? 'mH' : spec.unit}
                 min={spec.min * scale}
                 max={spec.max * scale}

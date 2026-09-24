@@ -1,6 +1,7 @@
-import type { DeviceProfile } from '../api/types'
+import type { DeviceProfile, SchematicImportResult } from '../api/types'
 import { Eyebrow, SelectableCard } from '../components/Card'
 import { ArrowRightIcon, CustomIcon, DeviceIcon } from '../components/Icons'
+import { SchematicUpload } from '../components/SchematicUpload'
 
 /**
  * DeviceSelect.tsx -- stage one: pick a starting point.
@@ -15,12 +16,14 @@ export function DeviceSelect({
   selectedId,
   onSelect,
   onCustom,
+  onSchematic,
   loading,
 }: {
   devices: DeviceProfile[]
   selectedId: string | null
   onSelect: (device: DeviceProfile) => void
   onCustom: () => void
+  onSchematic: (report: SchematicImportResult) => void
   loading: boolean
 }) {
   return (
@@ -101,6 +104,8 @@ export function DeviceSelect({
               <ArrowRightIcon className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
             </span>
           </button>
+
+          <SchematicUpload onImported={onSchematic} />
         </div>
       )}
     </div>

@@ -152,13 +152,14 @@ CABLE_RESONANCE_GAIN: Final[float] = 1.5      # weight of the resonant path vs t
 LISN_IMPEDANCE_OHM: Final[float] = 50.0
 
 # Common-mode choke, separate from shielding_quality.
-# Ott, Electromagnetic Compatibility Engineering (Wiley, 2009), filter chapter:
-# a series CM inductance into a resistive termination is a first-order low-pass,
-# |Vout/Vin| = 1 / sqrt(1 + (f/fc)^2), fc = Z / (2 π L).
-# L = effectiveness * 2 mH into the 50 ohm LISN. 2 mH is a typical power-entry
-# CM choke (order of 1 mH). effectiveness 0 leaves the current unchanged.
+# The CM current is already C dV/dt through the cable-to-earth capacitance, so
+# the choke is series L in that capacitive path, not a 50 ohm LISN low-pass.
+# Ott's fc = Z / (2 π L) with Z = 50 ohm puts a 0.1 mH choke near 80 kHz and
+# erases 150 kHz–30 MHz. Z here is the cable reactance at 150 kHz. Attenuation
+# also scales with inductance so a fraction of a millihenry cannot wipe the band.
 CM_CHOKE_L_MAX_H: Final[float] = 2.0e-3
-CM_CHOKE_Z_OHM: Final[float] = LISN_IMPEDANCE_OHM
+CM_CHOKE_REF_HZ: Final[float] = 150e3
+CM_CHOKE_MAX_ATTEN_DB: Final[float] = 16.0
 
 # Film capacitor that actually rings with the bus-bar inductance. The 2200 uF
 # electrolytic sets the 300 Hz ripple; it is too large to set the HF resonance.
@@ -465,8 +466,8 @@ PARAMETER_RANGES: Final[Tuple[ParameterRange, ...]] = (
         default=0.0,
         description=(
             "Inductance of a ferrite or toroid on the motor cable. 0 mH is no "
-            "choke. 2 mH is a full choke into the 50 ohm LISN, a first-order "
-            "low-pass (Ott, Electromagnetic Compatibility Engineering)."
+            "choke. It works against the cable's capacitance to earth, and a "
+            "small value only trims the conducted band rather than removing it."
         ),
     ),
     ParameterRange(
@@ -1010,18 +1011,24 @@ def _shielding_filter(
 def _apply_cm_choke(
     i_cm: np.ndarray, params: DeviceParameters, sample_rate_hz: float
 ) -> Tuple[np.ndarray, float]:
-    """First-order CM-choke low-pass. Returns (current, cutoff Hz).
+    """Series CM choke on the cable capacitance. Returns (current, cutoff Hz).
 
-    See CM_CHOKE_L_MAX_H. A zero effectiveness is an identity.
+    A zero inductance is an identity. Attenuation levels off at
+    CM_CHOKE_MAX_ATTEN_DB * effectiveness so a small choke only trims the band.
     """
     q = float(np.clip(params.cm_choke_effectiveness, 0.0, 1.0))
     if q < 1e-3:
         return i_cm, float("inf")
     inductance = q * CM_CHOKE_L_MAX_H
-    cutoff_hz = CM_CHOKE_Z_OHM / (2.0 * np.pi * inductance)
+    c_cable = CABLE_C_PER_METRE_F * max(float(params.cable_length_m), 1.0)
+    z_cable = 1.0 / (2.0 * np.pi * CM_CHOKE_REF_HZ * c_cable)
+    cutoff_hz = z_cable / (2.0 * np.pi * inductance)
     wn = float(np.clip(cutoff_hz / (0.5 * sample_rate_hz), 1e-6, 0.98))
     b, a = signal.butter(1, wn, btype="low")
-    return signal.lfilter(b, a, i_cm, axis=-1), float(cutoff_hz)
+    filtered = signal.lfilter(b, a, i_cm, axis=-1)
+    atten_db = CM_CHOKE_MAX_ATTEN_DB * q
+    leaked = 10.0 ** (-atten_db / 20.0)
+    return leaked * i_cm + (1.0 - leaked) * filtered, float(cutoff_hz)
 
 
 def _bus_ring_voltage(

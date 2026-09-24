@@ -297,6 +297,44 @@ export interface CompareResult {
   band_diff: BandDiff[]
 }
 
+export interface SchematicPart {
+  refdes: string
+  value: string
+  value_si: number | null
+  kind: string
+  windings: number
+  page: number
+}
+
+export interface SchematicFinding {
+  key: string
+  label: string
+  detail: string
+  refdes: string[]
+  emc_note: string
+}
+
+export interface SchematicInferred {
+  value: number | string
+  confidence: number
+  source: string
+}
+
+export interface SchematicImportResult {
+  ok: boolean
+  reason?: string
+  filename?: string
+  pages: number
+  part_count?: number
+  title?: string
+  parts: SchematicPart[]
+  findings: SchematicFinding[]
+  inferred: Record<string, SchematicInferred>
+  parameters?: Partial<DeviceParameters>
+  missing: string[]
+  note?: string
+}
+
 export interface AssessmentHistoryEntry {
   score: number
   plusMinus: number

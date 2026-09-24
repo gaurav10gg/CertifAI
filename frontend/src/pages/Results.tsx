@@ -4,6 +4,7 @@ import type {
   ParameterSpec,
   PredictionResult,
   RadiatedAssessment,
+  SchematicImportResult,
   TradeoffResponse,
 } from '../api/types'
 import { Card, Eyebrow } from '../components/Card'
@@ -14,6 +15,7 @@ import { CountermeasureList } from '../components/CountermeasureList'
 import { Disclaimer } from '../components/Disclaimer'
 import { HistorySparkline } from '../components/HistorySparkline'
 import { ArrowLeftIcon } from '../components/Icons'
+import { SchematicRecommendations } from '../components/SchematicRecommendations'
 import { ScoreDisplay } from '../components/ScoreDisplay'
 import { ShapWaterfall } from '../components/ShapWaterfall'
 import { SignalExplorer } from '../components/SignalExplorer'
@@ -55,9 +57,11 @@ export function Results({
   onRestart,
   onOpenMethodology,
   onOpenValidation,
+  schematic = null,
 }: {
   result: PredictionResult
   history: AssessmentHistoryEntry[]
+  schematic?: SchematicImportResult | null
   specs: ParameterSpec[]
   devices: DeviceProfile[]
   tradeoff: TradeoffResponse | null
@@ -183,6 +187,10 @@ export function Results({
         <Card className="sm:p-7">
           <CountermeasureList measures={result.countermeasures} />
         </Card>
+      ) : null}
+
+      {schematic ? (
+        <SchematicRecommendations result={result} report={schematic} />
       ) : null}
 
       <TradeoffExplorer

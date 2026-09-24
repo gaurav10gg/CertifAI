@@ -5,6 +5,7 @@ import type {
   HealthResponse,
   MethodologyResponse,
   PredictionResult,
+  SchematicImportResult,
   TradeoffResponse,
   ValidationResponse,
 } from './types'
@@ -109,6 +110,22 @@ export function fetchTradeoff(payload: {
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+/** Upload a schematic PDF; multipart, so it bypasses the JSON helper. */
+export async function importSchematic(file: File): Promise<SchematicImportResult> {
+  const body = new FormData()
+  body.append('file', file, file.name)
+  let response: Response
+  try {
+    response = await fetch(`${BASE}/schematic/import`, { method: 'POST', body })
+  } catch {
+    throw new ApiError('Could not reach the EMC Advisor backend.', 0)
+  }
+  if (!response.ok) {
+    throw new ApiError(await extractDetail(response), response.status)
+  }
+  return (await response.json()) as SchematicImportResult
 }
 
 export function comparePredictions(payload: {

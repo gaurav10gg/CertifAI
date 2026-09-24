@@ -15,6 +15,7 @@ import type {
   DevicesResponse,
   MethodologyResponse,
   PredictionResult,
+  SchematicImportResult,
   TradeoffResponse,
   ValidationResponse,
 } from './api/types'
@@ -108,6 +109,7 @@ export default function App() {
   const [parameters, setParameters] = useState<DeviceParameters | null>(null)
 
   const [result, setResult] = useState<PredictionResult | null>(null)
+  const [schematic, setSchematic] = useState<SchematicImportResult | null>(null)
   const [history, setHistory] = useState<AssessmentHistoryEntry[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [predictError, setPredictError] = useState<string | null>(null)
@@ -231,6 +233,7 @@ export default function App() {
 
   const onSelectDevice = (profile: DeviceProfile) => {
     setDevice(profile)
+    setSchematic(null)
     setParameters(withFilterDefault(profile.parameters))
     setResult(null)
     setPredictError(null)
@@ -241,7 +244,23 @@ export default function App() {
   const onCustom = () => {
     if (!catalogue) return
     setDevice(null)
+    setSchematic(null)
     setParameters(defaultParameters(catalogue))
+    setResult(null)
+    setPredictError(null)
+    clearTradeoff()
+    advance('configure')
+  }
+
+  const onSchematic = (report: SchematicImportResult) => {
+    if (!catalogue) return
+    // Start from mid-range defaults for the fields a schematic cannot carry,
+    // then overwrite with whatever the drawing gave us.
+    const base = defaultParameters(catalogue)
+    const merged: DeviceParameters = { ...base, ...(report.parameters ?? {}) } as DeviceParameters
+    setDevice(null)
+    setSchematic(report)
+    setParameters(withFilterDefault(merged))
     setResult(null)
     setPredictError(null)
     clearTradeoff()
@@ -252,6 +271,7 @@ export default function App() {
     setStep('select')
     setFurthest('select')
     setDevice(null)
+    setSchematic(null)
     setParameters(null)
     setResult(null)
     setPredictError(null)
@@ -375,6 +395,7 @@ export default function App() {
             selectedId={device?.id ?? null}
             onSelect={onSelectDevice}
             onCustom={onCustom}
+            onSchematic={onSchematic}
             loading={!catalogue}
           />
         ) : step === 'configure' ? (
@@ -383,8 +404,9 @@ export default function App() {
             pwmOptions={catalogue.pwm_modulation_types}
             deviceOptions={catalogue.switching_device_types ?? []}
             parameters={parameters}
-            deviceName={device?.name ?? 'Custom configuration'}
-            isCustom={device === null}
+            deviceName={device?.name ?? schematic?.title ?? 'Custom configuration'}
+            isCustom={device === null && schematic === null}
+            schematic={schematic}
             onChange={setParameters}
             onBack={() => setStep('select')}
             onSubmit={onSubmit}
@@ -412,6 +434,7 @@ export default function App() {
             onRestart={onRestart}
             onOpenMethodology={openMethodology}
             onOpenValidation={openValidation}
+            schematic={schematic}
           />
         ) : null}
 
