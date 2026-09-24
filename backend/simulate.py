@@ -151,6 +151,32 @@ CABLE_RESONANCE_MODES: Final[int] = 3         # quarter-wave mode plus 3f, 5f ha
 CABLE_RESONANCE_GAIN: Final[float] = 1.5      # weight of the resonant path vs the direct path
 LISN_IMPEDANCE_OHM: Final[float] = 50.0
 
+# Common-mode choke, separate from shielding_quality.
+# Ott, Electromagnetic Compatibility Engineering (Wiley, 2009), filter chapter:
+# a series CM inductance into a resistive termination is a first-order low-pass,
+# |Vout/Vin| = 1 / sqrt(1 + (f/fc)^2), fc = Z / (2 π L).
+# L = effectiveness * 2 mH into the 50 ohm LISN. 2 mH is a typical power-entry
+# CM choke (order of 1 mH). effectiveness 0 leaves the current unchanged.
+CM_CHOKE_L_MAX_H: Final[float] = 2.0e-3
+CM_CHOKE_Z_OHM: Final[float] = LISN_IMPEDANCE_OHM
+
+# Film capacitor that actually rings with the bus-bar inductance. The 2200 uF
+# electrolytic sets the 300 Hz ripple; it is too large to set the HF resonance.
+# Skibinski, Kerkman and Schlegel, "EMI Emissions of Modern PWM AC Drives"
+# (IEEE Industry Applications Magazine, 1999): the DC bus rings after each
+# commutation at the parasitic L and the local film/snubber C.
+BUS_FILM_C_F: Final[float] = 4.7e-6
+# A real Y-capacitor is not a pure C. Lead and body inductance put the
+# self-resonance in the low tens of MHz for a few tens of nanofarads, and a
+# couple of ohms of ESR keep the notch finite. Ott treats the ideal shunt as
+# a low-pass; these two parasitics stop that low-pass from falling forever.
+Y_CAP_ESL_H: Final[float] = 15.0e-9
+Y_CAP_ESR_OHM: Final[float] = 2.0
+# +/-10% carrier dither. Smaller than RANDOM_SPWM's +/-35%, and in the range
+# used for conducted-EMI spread-spectrum (a few to about ten percent).
+SPREAD_SPECTRUM_JITTER: Final[float] = 0.10
+RECTIFIER_TYPES: Final[Tuple[str, ...]] = ("DIODE_6PULSE", "ACTIVE_FRONT_END")
+
 # Reference load current for the sub-linear amplitude scaling. Emissions grow
 # with load current but less than proportionally, because much of the CM path is
 # displacement current driven by dv/dt rather than by load current.
@@ -216,6 +242,35 @@ PWM_MODULATION_TYPES: Final[Tuple[str, ...]] = (
     "DPWM",
     "RANDOM_SPWM",
 )
+
+# Switching-device edge-speed multipliers, applied to the nominal dv/dt and
+# di/dt inside the simulators. They are NOT conducted-model features.
+#
+# Si IGBT is the baseline (x1). SiC MOSFET and GaN HEMT edges are faster at the
+# same nominal gate-drive setting because the device capacitances and switching
+# energies are smaller:
+#   * SiC is commonly about 2-4x a same-class Si IGBT in dv/dt
+#     (Wolfspeed CPWR-AN08 and Infineon SiC MOSFET application notes quote
+#     Si IGBT edges of roughly 5-15 V/ns against SiC edges of 20-50 V/ns).
+#     The factor used here is 2.5, inside that published span.
+#   * GaN is commonly about 5-10x a Si IGBT (EPC "GaN FET Switching" and
+#     Transphorm application notes quote 50-100 V/ns). The factor used here
+#     is 5.0, inside that published span.
+SWITCHING_DEVICE_TYPES: Final[Tuple[str, ...]] = (
+    "SI_IGBT",
+    "SIC_MOSFET",
+    "GAN",
+)
+SWITCHING_DEVICE_EDGE_MULTIPLIER: Final[Dict[str, float]] = {
+    "SI_IGBT": 1.0,
+    "SIC_MOSFET": 2.5,
+    "GAN": 5.0,
+}
+SWITCHING_DEVICE_LABELS: Final[Dict[str, str]] = {
+    "SI_IGBT": "Si IGBT",
+    "SIC_MOSFET": "SiC MOSFET",
+    "GAN": "GaN",
+}
 
 PWM_MODULATION_LABELS: Final[Dict[str, str]] = {
     "SPWM": "Sinusoidal PWM",
@@ -366,9 +421,9 @@ PARAMETER_RANGES: Final[Tuple[ParameterRange, ...]] = (
         step=0.01,
         default=0.6,
         description=(
-            "Combined effectiveness of cable screening, 360-degree screen "
-            "termination and any common-mode choke. 0 = unscreened cable, "
-            "1 = fully terminated screen plus CM filtering."
+            "Cable screening and 360-degree screen termination. 0 = unscreened "
+            "cable, 1 = a fully terminated screen. The common-mode choke is a "
+            "separate control."
         ),
     ),
     ParameterRange(
@@ -398,6 +453,53 @@ PARAMETER_RANGES: Final[Tuple[ParameterRange, ...]] = (
             "input. Improves input-current THD (5th and 7th harmonics) but does "
             "not change motor-cable conducted emissions, so it is excluded from "
             "the EMC risk models."
+        ),
+    ),
+    ParameterRange(
+        key="cm_choke_effectiveness",
+        label="Common-Mode Choke Effectiveness",
+        unit="",
+        minimum=0.0,
+        maximum=1.0,
+        step=0.01,
+        default=0.0,
+        description=(
+            "A ferrite or toroid on the motor cable that directly suppresses "
+            "common-mode noise current — the same noise mechanism this tool's "
+            "conducted-emissions score is built around. 0 = no choke. 1 = a "
+            "2 mH choke into the 50 ohm LISN, a first-order low-pass "
+            "(Ott, Electromagnetic Compatibility Engineering)."
+        ),
+    ),
+    ParameterRange(
+        key="clock_frequency_mhz",
+        label="Clock Frequency",
+        unit="MHz",
+        minimum=20.0,
+        maximum=200.0,
+        step=1.0,
+        default=48.0,
+        description=(
+            "Digital clock on the control board. It does not enter the conducted "
+            "common-mode model. It is a source for the separate radiated model."
+        ),
+    ),
+    ParameterRange(
+        key="di_dt_a_per_us",
+        label="di/dt",
+        unit="A/us",
+        minimum=20.0,
+        maximum=2000.0,
+        step=10.0,
+        default=200.0,
+        description=(
+            "Current turn-off rate. Higher di/dt raises radiated magnetic-field "
+            "emissions from the cable loop. It does not enter the conducted "
+            "common-mode score. Mohan, Undeland and Robbins (Power Electronics, "
+            "3rd ed.) treat di/dt as I/t_fall; Erickson and Maksimovic bound it "
+            "by the commutation-loop inductance (v = L di/dt). 20-2000 A/us "
+            "covers a few tens of amps in about a microsecond down to a fast "
+            "module edge."
         ),
     ),
 )
@@ -434,6 +536,21 @@ class DeviceParameters:
     load_current_a: float
     pwm_modulation_type: str = "SPWM"
     input_filter_quality: float = 0.45
+    cm_choke_effectiveness: float = 0.0
+    clock_frequency_mhz: float = 48.0
+    di_dt_a_per_us: float = 200.0
+    switching_device_type: str = "SI_IGBT"
+    # Advanced physics inputs. Defaults reproduce the previous simulator exactly.
+    # They are not design-only model features and must not be added to SHAP.
+    dc_bus_voltage_v: float = V_DC_LINK
+    dc_bus_esl_h: float = 0.0
+    dc_bus_esr_ohm: float = 0.0
+    dead_time_us: float = 0.0
+    spread_spectrum: bool = False
+    spread_spectrum_jitter: float = SPREAD_SPECTRUM_JITTER
+    rectifier_type: str = "DIODE_6PULSE"
+    dc_link_choke_h: float = 0.0
+    y_capacitance_f: float = 0.0
 
     def __post_init__(self) -> None:
         if self.pwm_modulation_type not in PWM_CM_PENALTY_DB:
@@ -441,14 +558,28 @@ class DeviceParameters:
                 f"pwm_modulation_type must be one of {PWM_MODULATION_TYPES}, "
                 f"got {self.pwm_modulation_type!r}"
             )
+        if self.switching_device_type not in SWITCHING_DEVICE_EDGE_MULTIPLIER:
+            raise ValueError(
+                f"switching_device_type must be one of {SWITCHING_DEVICE_TYPES}, "
+                f"got {self.switching_device_type!r}"
+            )
+        if self.rectifier_type not in RECTIFIER_TYPES:
+            raise ValueError(
+                f"rectifier_type must be one of {RECTIFIER_TYPES}, "
+                f"got {self.rectifier_type!r}"
+            )
 
     @classmethod
     def clamped(cls, **kwargs: object) -> "DeviceParameters":
         """Build an instance with numeric fields clamped to admissible ranges."""
         values: Dict[str, object] = {}
         for key in NUMERIC_PARAMETER_KEYS:
-            values[key] = PARAMETER_RANGE_BY_KEY[key].clamp(float(kwargs[key]))  # type: ignore[arg-type]
+            if key not in kwargs:
+                values[key] = PARAMETER_RANGE_BY_KEY[key].default
+            else:
+                values[key] = PARAMETER_RANGE_BY_KEY[key].clamp(float(kwargs[key]))  # type: ignore[arg-type]
         values["pwm_modulation_type"] = kwargs.get("pwm_modulation_type", "SPWM")
+        values["switching_device_type"] = kwargs.get("switching_device_type", "SI_IGBT")
         return cls(**values)  # type: ignore[arg-type]
 
     def as_dict(self) -> Dict[str, object]:
@@ -460,6 +591,19 @@ class DeviceParameters:
             "load_current_a": self.load_current_a,
             "pwm_modulation_type": self.pwm_modulation_type,
             "input_filter_quality": self.input_filter_quality,
+            "cm_choke_effectiveness": self.cm_choke_effectiveness,
+            "clock_frequency_mhz": self.clock_frequency_mhz,
+            "di_dt_a_per_us": self.di_dt_a_per_us,
+            "switching_device_type": self.switching_device_type,
+            "dc_bus_voltage_v": self.dc_bus_voltage_v,
+            "dc_bus_esl_h": self.dc_bus_esl_h,
+            "dc_bus_esr_ohm": self.dc_bus_esr_ohm,
+            "dead_time_us": self.dead_time_us,
+            "spread_spectrum": self.spread_spectrum,
+            "spread_spectrum_jitter": self.spread_spectrum_jitter,
+            "rectifier_type": self.rectifier_type,
+            "dc_link_choke_h": self.dc_link_choke_h,
+            "y_capacitance_f": self.y_capacitance_f,
         }
 
     @property
@@ -467,11 +611,38 @@ class DeviceParameters:
         """Modelled CM-emission offset of this strategy relative to SPWM, in dB."""
         return PWM_CM_PENALTY_DB[self.pwm_modulation_type]
 
+    @property
+    def device_edge_multiplier(self) -> float:
+        """SiC/GaN speed-up applied to nominal dv/dt and di/dt. Not an ML feature."""
+        return SWITCHING_DEVICE_EDGE_MULTIPLIER[self.switching_device_type]
+
+    @property
+    def effective_dv_dt_v_per_us(self) -> float:
+        return float(self.dv_dt_v_per_us) * self.device_edge_multiplier
+
+    @property
+    def effective_di_dt_a_per_us(self) -> float:
+        return float(self.di_dt_a_per_us) * self.device_edge_multiplier
+
     def deterministic_seed(self) -> int:
         """Stable seed so identical parameters always give an identical report."""
+        # Neutral advanced settings are omitted so an untouched design keeps
+        # the seed, and therefore the noise floor, of the previous simulator.
+        neutral = {
+            "dc_bus_voltage_v": V_DC_LINK,
+            "dc_bus_esl_h": 0.0,
+            "dc_bus_esr_ohm": 0.0,
+            "dead_time_us": 0.0,
+            "spread_spectrum": False,
+            "spread_spectrum_jitter": SPREAD_SPECTRUM_JITTER,
+            "rectifier_type": "DIODE_6PULSE",
+            "dc_link_choke_h": 0.0,
+            "y_capacitance_f": 0.0,
+        }
         payload = "|".join(
             f"{k}={v:.6f}" if isinstance(v, float) else f"{k}={v}"
             for k, v in sorted(self.as_dict().items())
+            if k not in neutral or v != neutral[k]
         )
         digest = hashlib.sha256(payload.encode("utf-8")).digest()
         return int.from_bytes(digest[:4], "big")
@@ -588,9 +759,45 @@ def _switching_states(
     jitter = (
         RANDOM_SPWM_JITTER if params.pwm_modulation_type == "RANDOM_SPWM" else 0.0
     )
-    carrier = _triangle_from_phase(_carrier_phase(t, dt, carrier_hz, jitter, rng))
+    phase_rng = rng
+    # A dedicated stream so enabling dither does not reshuffle the noise floor.
+    # RANDOM_SPWM already jitters on the main stream; leave that path alone.
+    if params.spread_spectrum and jitter < float(params.spread_spectrum_jitter):
+        jitter = float(np.clip(params.spread_spectrum_jitter, 0.0, 0.40))
+        phase_rng = np.random.default_rng(params.deterministic_seed() ^ 0x5A17)
+    carrier = _triangle_from_phase(
+        _carrier_phase(t, dt, carrier_hz, jitter, phase_rng)
+    )
     ref = _modulation_references(t, params.pwm_modulation_type)
-    return np.where(ref > carrier[:, None, :], 1.0, -1.0)
+    states = np.where(ref > carrier[:, None, :], 1.0, -1.0)
+    return _apply_dead_time(states, params.dead_time_us * 1e-6, dt, ref)
+
+
+def _apply_dead_time(
+    states: np.ndarray,
+    dead_time_s: float,
+    dt: float,
+    reference: np.ndarray,
+) -> np.ndarray:
+    """Blank one edge for ``dead_time_s``, in the direction of the phase current.
+
+    Mohan, Undeland and Robbins, Power Electronics (3rd ed.): during blanking
+    the leg voltage follows the device that is still carrying current, so the
+    volt-second error reverses with the current. That square-wave error is a
+    secondary source of low-order distortion (5th, 7th). The reference sine is
+    the stand-in for current polarity. Zero dead time returns the states
+    unchanged.
+    """
+    n_delay = int(round(dead_time_s / dt)) if dead_time_s > 0.0 else 0
+    if n_delay <= 0:
+        return states
+    delayed = np.empty_like(states)
+    delayed[..., :n_delay] = states[..., :1]
+    delayed[..., n_delay:] = states[..., :-n_delay]
+    positive = reference > 0.0
+    blank_rise = (states > 0.0) & (delayed < 0.0) & positive
+    blank_fall = (states < 0.0) & (delayed > 0.0) & ~positive
+    return np.where(blank_rise | blank_fall, delayed, states)
 
 
 # ---------------------------------------------------------------------------
@@ -615,13 +822,18 @@ def _leg_voltages(
     states: np.ndarray, params: DeviceParameters, dt: float
 ) -> np.ndarray:
     """Trapezoidal pole voltages, shape ``(n_segments, 3, n_samples)`` in volts."""
-    rise_time_s = V_DC_LINK / (params.dv_dt_v_per_us * 1e6)
+    rise_time_s = _dc_voltage(params) / (params.effective_dv_dt_v_per_us * 1e6)
     n_rise = max(1, int(round(rise_time_s / dt)))
 
     transitions = np.zeros_like(states)
     transitions[..., 1:] = np.diff(states, axis=-1) / 2.0
     spread = _causal_box_filter(transitions, n_rise)
-    return (np.cumsum(spread, axis=-1) - 0.5) * V_DC_LINK
+    return (np.cumsum(spread, axis=-1) - 0.5) * _dc_voltage(params)
+
+
+def _dc_voltage(params: DeviceParameters) -> float:
+    """Instantaneous DC-bus setpoint. Default 565 V is the historical constant."""
+    return float(params.dc_bus_voltage_v)
 
 
 def _common_mode_voltage(
@@ -661,7 +873,20 @@ def _dc_link_voltage(
     # Three-phase inverter DC current has a strong component at twice the carrier.
     residual_amp = i_dc / (DC_LINK_CAP_F * 2.0 * np.pi * max(f_sw, 1e3) * 2.0)
     switching = states.mean(axis=1)  # (n_seg, n) in [-1, 1]
-    return V_DC_LINK + ripple_300 + residual_amp * switching
+    # A series DC choke raises the impedance in front of C_dc, so both the
+    # 300 Hz ripple and the switching residual shrink. Mohan treats the DC
+    # choke as a current smoother; it is not the common-mode choke.
+    # |V_c / V_source| = 1 / sqrt(1 + (ω^2 L C)^2). L = 0 leaves the gain at 1.
+    inductance = max(float(params.dc_link_choke_h), 0.0)
+
+    def _choke_gain(omega: float) -> float:
+        if inductance < 1e-8:
+            return 1.0
+        return float(1.0 / np.sqrt(1.0 + (omega ** 2 * inductance * DC_LINK_CAP_F) ** 2))
+
+    ripple_300 = ripple_300 * _choke_gain(omega_300)
+    residual_amp = residual_amp * _choke_gain(2.0 * np.pi * 2.0 * max(f_sw, 1e3))
+    return _dc_voltage(params) + ripple_300 + residual_amp * switching
 
 
 def _input_current(
@@ -678,17 +903,25 @@ def _input_current(
     """
     i_dc = params.load_current_a * RECTIFIER_ID_SCALE
     theta = 2.0 * np.pi * MAINS_HZ * t
-    # Classical 6-pulse Fourier series, truncated at the 25th.
-    current = np.zeros_like(t, dtype=float)
-    two_root3_over_pi = 2.0 * np.sqrt(3.0) / np.pi
-    load_distortion = 1.0 + 0.35 * (params.load_current_a / LOAD_CURRENT_REF_A)
-    for harmonic in (1, 5, 7, 11, 13, 17, 19, 23, 25):
-        sign = 1.0 if harmonic % 4 == 1 else -1.0  # +1, -5, +7, -11, ...
-        weight = two_root3_over_pi * sign / harmonic
-        if harmonic > 1:
-            weight *= load_distortion
-        current = current + weight * np.cos(harmonic * theta)
-    current = current * i_dc
+    if params.rectifier_type == "ACTIVE_FRONT_END":
+        # PWM rectifier. Mohan: an active front end draws a near-sinusoid,
+        # with residual harmonics of a few percent, against the ~30% THD of
+        # an uncontrolled six-pulse bridge (5th and 7th dominant).
+        current = i_dc * (
+            np.cos(theta) + 0.03 * np.cos(5.0 * theta) + 0.02 * np.cos(7.0 * theta)
+        )
+    else:
+        # Classical 6-pulse Fourier series, truncated at the 25th.
+        current = np.zeros_like(t, dtype=float)
+        two_root3_over_pi = 2.0 * np.sqrt(3.0) / np.pi
+        load_distortion = 1.0 + 0.35 * (params.load_current_a / LOAD_CURRENT_REF_A)
+        for harmonic in (1, 5, 7, 11, 13, 17, 19, 23, 25):
+            sign = 1.0 if harmonic % 4 == 1 else -1.0  # +1, -5, +7, -11, ...
+            weight = two_root3_over_pi * sign / harmonic
+            if harmonic > 1:
+                weight *= load_distortion
+            current = current + weight * np.cos(harmonic * theta)
+        current = current * i_dc
 
     # Switching-frequency hash on the DC bus, coupled back through C_dc.
     f_sw = params.switching_frequency_khz * 1e3
@@ -776,6 +1009,89 @@ def _shielding_filter(
     return b, a, broadband_gain, insertion_loss_db, cutoff_hz
 
 
+def _apply_cm_choke(
+    i_cm: np.ndarray, params: DeviceParameters, sample_rate_hz: float
+) -> Tuple[np.ndarray, float]:
+    """First-order CM-choke low-pass. Returns (current, cutoff Hz).
+
+    See CM_CHOKE_L_MAX_H. A zero effectiveness is an identity.
+    """
+    q = float(np.clip(params.cm_choke_effectiveness, 0.0, 1.0))
+    if q < 1e-3:
+        return i_cm, float("inf")
+    inductance = q * CM_CHOKE_L_MAX_H
+    cutoff_hz = CM_CHOKE_Z_OHM / (2.0 * np.pi * inductance)
+    wn = float(np.clip(cutoff_hz / (0.5 * sample_rate_hz), 1e-6, 0.98))
+    b, a = signal.butter(1, wn, btype="low")
+    return signal.lfilter(b, a, i_cm, axis=-1), float(cutoff_hz)
+
+
+def _bus_ring_voltage(
+    states: np.ndarray, params: DeviceParameters, dt: float
+) -> np.ndarray:
+    """Lightly damped bus-bar ring, volts, shape ``(n_segments, n_samples)``.
+
+    f = 1 / (2 π √(L C_film)). A current step into that tank rings at about
+    I · √(L/C) (Erickson and Maksimovic, Fundamentals of Power Electronics).
+    ESR sets the damping, ζ = (R/2) √(C/L). L = 0 is an exact zero.
+    """
+    single = states.ndim == 2
+    if single:
+        states = states[None, ...]
+    n_segments, _legs, n_samples = states.shape
+    inductance = float(params.dc_bus_esl_h)
+    if inductance < 1e-12:
+        zeros = np.zeros((n_segments, n_samples))
+        return zeros[0] if single else zeros
+
+    omega = 1.0 / np.sqrt(inductance * BUS_FILM_C_F)
+    resistance = float(params.dc_bus_esr_ohm)
+    if resistance > 0.0:
+        zeta = (resistance / 2.0) * np.sqrt(BUS_FILM_C_F / inductance)
+    else:
+        zeta = 0.08
+    zeta = float(np.clip(zeta, 0.02, 0.85))
+    edges = np.zeros((n_segments, n_samples))
+    edges[:, 1:] = np.abs(np.diff(states.mean(axis=1), axis=-1))
+    b, a = signal.bilinear(
+        [omega ** 2], [1.0, 2.0 * zeta * omega, omega ** 2], fs=1.0 / dt
+    )
+    impulse = np.zeros(n_samples)
+    impulse[0] = 1.0
+    peak = float(np.max(np.abs(signal.lfilter(b, a, impulse)))) + 1e-30
+    ring = signal.lfilter(b, a, edges, axis=-1) / peak
+    amplitude = float(params.load_current_a) * np.sqrt(inductance / BUS_FILM_C_F)
+    out = amplitude * ring
+    return out[0] if single else out
+
+
+def _apply_y_capacitor(
+    i_cm: np.ndarray, params: DeviceParameters, sample_rate_hz: float
+) -> np.ndarray:
+    """Shunt Y-capacitor, separate from the series common-mode choke.
+
+    The current that reaches the 50 ohm LISN is the divider
+    Z_y / (Z_y + R_lisn), with Z_y = R_esr + s L_esl + 1/(s C).
+    C = 0 is an identity. L_esl and R_esr are fixed parasitics (see
+    Y_CAP_ESL_H): the ideal capacitor would keep falling forever, but a real
+    Y-cap bottoms out at its self-resonance and then recovers as it becomes
+    inductive. A choke blocks common-mode current; a Y-cap shunts it.
+    """
+    capacitance = float(params.y_capacitance_f)
+    if capacitance < 1e-13:
+        return i_cm
+    inductance = Y_CAP_ESL_H
+    resistance = Y_CAP_ESR_OHM
+    numerator = [inductance * capacitance, resistance * capacitance, 1.0]
+    denominator = [
+        inductance * capacitance,
+        (resistance + LISN_IMPEDANCE_OHM) * capacitance,
+        1.0,
+    ]
+    b, a = signal.bilinear(numerator, denominator, fs=sample_rate_hz)
+    return signal.lfilter(b, a, i_cm, axis=-1)
+
+
 def _noise_floor(
     shape: Tuple[int, int], target_dbuv: float, rng: np.random.Generator
 ) -> np.ndarray:
@@ -846,6 +1162,9 @@ def simulate_device(
     # 1-2. Trapezoidal leg voltages -> common-mode voltage.
     states = _switching_states(params, t, dt, rng)
     legs = _leg_voltages(states, params, dt)
+    ring = _bus_ring_voltage(states, params, dt)
+    if float(params.dc_bus_esl_h) >= 1e-12:
+        legs = legs * (1.0 + ring[:, None, :] / _dc_voltage(params))
     v_cm = legs.mean(axis=1)
 
     # 4. Cable resonance / edge ringing.
@@ -862,6 +1181,8 @@ def simulate_device(
         _shielding_filter(params, sample_rate_hz)
     )
     i_cm = signal.lfilter(sh_b, sh_a, i_cm, axis=-1) * broadband_gain
+    i_cm, choke_cutoff_hz = _apply_cm_choke(i_cm, params, sample_rate_hz)
+    i_cm = _apply_y_capacitor(i_cm, params, sample_rate_hz)
 
     # Disturbance voltage developed across the measuring impedance, plus a
     # randomised instrument / environment noise floor (step 6).
@@ -884,6 +1205,7 @@ def simulate_device(
     pq_legs = _leg_voltages(pq_states[None, ...], params, pq_dt)[0]
     pq_motor_current = _rl_current(pq_legs[0], pq_dt, MOTOR_L_H, MOTOR_R_OHM)
     pq_dc_link = _dc_link_voltage(pq_t, params, pq_states[None, ...])[0]
+    pq_dc_link = pq_dc_link + _bus_ring_voltage(pq_states, params, pq_dt)
     pq_input = _input_current(pq_t, params, pq_dt, pq_rng)
 
     def _trace(key: str, label: str, unit: str, timescale: str,
@@ -893,10 +1215,20 @@ def simulate_device(
 
     explorer = (
         _trace(
-            "dc_link", "DC-link voltage", "V", "fundamental",
-            "300 Hz rectifier ripple plus a 2×carrier residual. Ripple grows with "
-            "load current; the residual frequency tracks the switching frequency.",
-            pq_t, pq_dc_link,
+            "dc_link", "DC-link voltage", "V",
+            "switching" if float(params.dc_bus_esl_h) >= 1e-12 else "fundamental",
+            (
+                "Switching-timescale bus voltage. Parasitic inductance rings after "
+                "each transition; that ring is absent when ESL is zero."
+                if float(params.dc_bus_esl_h) >= 1e-12 else
+                "300 Hz rectifier ripple plus a 2×carrier residual. Ripple grows with "
+                "load current; the residual frequency tracks the switching frequency."
+            ),
+            time_s if float(params.dc_bus_esl_h) >= 1e-12 else pq_t,
+            (
+                _dc_voltage(params) + ring[0, N_WARMUP_SAMPLES:]
+                if float(params.dc_bus_esl_h) >= 1e-12 else pq_dc_link
+            ),
         ),
         _trace(
             "motor_voltage", "Motor line-to-line voltage", "V", "switching",
@@ -916,7 +1248,10 @@ def simulate_device(
         _trace(
             "input_current", "Input current", "A", "fundamental",
             "6-pulse rectifier phase current. 5th and 7th harmonics dominate; "
-            "a line reactor (input filter) attenuates them.",
+            "a line reactor (input filter) attenuates them."
+            if params.rectifier_type == "DIODE_6PULSE" else
+            "Active-front-end phase current: near-sinusoidal, with only a small "
+            "5th and 7th residual. Much lower distortion than a 6-pulse bridge.",
             pq_t, pq_input,
         ),
     )
@@ -929,12 +1264,15 @@ def simulate_device(
         parameters=params,
         diagnostics={
             "n_segments": float(n_segments),
-            "rise_time_ns": V_DC_LINK / (params.dv_dt_v_per_us * 1e6) * 1e9,
-            "envelope_corner_hz": params.dv_dt_v_per_us * 1e6 / (np.pi * V_DC_LINK),
+            "rise_time_ns": _dc_voltage(params) / (params.effective_dv_dt_v_per_us * 1e6) * 1e9,
+            "envelope_corner_hz": params.effective_dv_dt_v_per_us * 1e6 / (np.pi * _dc_voltage(params)),
+            "bus_ring_pp_v": float(np.ptp(ring)),
             "cable_resonance_hz": f_res,
             "cable_capacitance_pf": c_par_f * 1e12,
             "shield_insertion_loss_db": insertion_loss_db,
             "shield_cutoff_hz": shield_cutoff_hz,
+            "cm_choke_cutoff_hz": choke_cutoff_hz,
+            "effective_dv_dt_v_per_us": params.effective_dv_dt_v_per_us,
             "noise_floor_dbuv": noise_floor_dbuv,
             "load_gain": load_gain,
             "motor_l_mh": MOTOR_L_H * 1e3,
@@ -972,6 +1310,10 @@ def sample_random_parameters(rng: np.random.Generator) -> DeviceParameters:
         load_current_a=_log_uniform("load_current_a"),
         pwm_modulation_type=str(rng.choice(PWM_MODULATION_TYPES)),
         input_filter_quality=_uniform("input_filter_quality"),
+        cm_choke_effectiveness=_uniform("cm_choke_effectiveness"),
+        clock_frequency_mhz=_uniform("clock_frequency_mhz"),
+        di_dt_a_per_us=_log_uniform("di_dt_a_per_us"),
+        switching_device_type=str(rng.choice(list(SWITCHING_DEVICE_TYPES))),
     )
 
 

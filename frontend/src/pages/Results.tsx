@@ -3,6 +3,7 @@ import type {
   DeviceProfile,
   ParameterSpec,
   PredictionResult,
+  RadiatedAssessment,
   TradeoffResponse,
 } from '../api/types'
 import { Card, Eyebrow } from '../components/Card'
@@ -137,6 +138,8 @@ export function Results({
         <BandBreakdown bands={result.bands} />
       </Card>
 
+      {result.radiated ? <RadiatedSection radiated={result.radiated} /> : null}
+
       {result.signals?.length ? (
         <Card className="sm:p-7">
           <SignalExplorer signals={result.signals} />
@@ -220,7 +223,7 @@ export function Results({
             <ConsistencyRow
               label="Balanced accuracy"
               value={formatRatio(consistency.mean_balanced_accuracy)}
-              hint="all 18 features"
+              hint={`all ${result.model_info.feature_count} features`}
             />
             <ConsistencyRow
               label="Margin error"
@@ -230,7 +233,7 @@ export function Results({
             <ConsistencyRow
               label="Design-only accuracy"
               value={formatRatio(ablation.mean_balanced_accuracy)}
-              hint="6 design parameters only"
+              hint={`${result.model_info.design_feature_count ?? 7} design parameters only`}
             />
             <ConsistencyRow
               label="Design-only margin error"
@@ -267,12 +270,78 @@ export function Results({
         <CertificateButton result={result} />
       </Card>
 
+      <Card>
+        <Eyebrow>Assumptions and limitations</Eyebrow>
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          {result.assumptions_scope}
+        </p>
+      </Card>
+
       <Disclaimer
         text={result.disclaimer}
         onOpenMethodology={onOpenMethodology}
         className="border-t border-line pt-5"
       />
     </div>
+  )
+}
+
+function RadiatedSection({ radiated }: { radiated: RadiatedAssessment }) {
+  return (
+    <section className="rounded-card border border-dashed border-line-strong bg-surface/70 p-5 sm:p-7">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <Eyebrow>Separate assessment · 30 MHz–1 GHz</Eyebrow>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink">
+            {radiated.title}
+          </h2>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-2xl font-semibold tabular leading-none text-ink">
+            {Math.round(radiated.risk_score)}
+            <span className="ml-1 text-sm font-normal text-ink-faint">/100</span>
+          </span>
+          <span
+            className="inline-flex items-center rounded-full border border-dashed
+              border-ink-faint px-2.5 py-1 text-2xs font-semibold uppercase
+              tracking-label text-ink-muted"
+          >
+            {radiated.badge}
+          </span>
+        </div>
+      </div>
+      <p className="mt-3 text-sm leading-relaxed text-ink-muted">{radiated.caption}</p>
+      <p className="mt-2 text-sm text-ink">
+        <span className="text-ink-faint">Top driver · </span>
+        {radiated.top_factor.statement}
+      </p>
+
+      <div className="mt-6">
+        <SpectrumChart
+          spectrum={radiated.spectrum}
+          bands={radiated.bands}
+          eyebrow="Radiated spectrum"
+          subtitle="Clock harmonics and the synthetic radiated limit, 30 MHz to 1 GHz."
+          unit="dBµV/m"
+          yLabel="dBµV/m"
+          xTicks={[30, 50, 100, 230, 500, 1000]}
+          dividersMhz={[230]}
+          chartId="radiated"
+          showDots
+        />
+      </div>
+
+      <div className="mt-6">
+        <Eyebrow>Radiated bands</Eyebrow>
+        <div className="mt-3">
+          <BandBreakdown bands={radiated.bands} unit="dBµV/m" showUncertainty={false} />
+        </div>
+      </div>
+
+      <p className="mt-5 border-t border-dashed border-line pt-4 text-xs leading-relaxed text-ink-muted">
+        {radiated.disclaimer}
+      </p>
+    </section>
   )
 }
 

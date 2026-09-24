@@ -44,12 +44,29 @@ function heldParameterKey(parameters: DeviceParameters): string {
 function defaultParameters(devices: DevicesResponse): DeviceParameters {
   const numeric = Object.fromEntries(
     devices.parameters.map((spec) => [spec.key, spec.default]),
-  ) as Omit<DeviceParameters, 'pwm_modulation_type'>
+  ) as Record<string, number>
 
   return {
-    ...numeric,
+    switching_frequency_khz: numeric.switching_frequency_khz ?? 8,
+    dv_dt_v_per_us: numeric.dv_dt_v_per_us ?? 3500,
+    cable_length_m: numeric.cable_length_m ?? 25,
+    shielding_quality: numeric.shielding_quality ?? 0.6,
+    load_current_a: numeric.load_current_a ?? 45,
     pwm_modulation_type: 'SPWM',
+    switching_device_type: 'SI_IGBT',
     input_filter_quality: numeric.input_filter_quality ?? 0.45,
+    cm_choke_effectiveness: numeric.cm_choke_effectiveness ?? 0,
+    clock_frequency_mhz: numeric.clock_frequency_mhz ?? 48,
+    di_dt_a_per_us: numeric.di_dt_a_per_us ?? 200,
+    dc_bus_voltage_v: 565,
+    dc_bus_esl_h: 0,
+    dc_bus_esr_ohm: 0,
+    dead_time_us: 0,
+    spread_spectrum: false,
+    spread_spectrum_jitter: 0.1,
+    rectifier_type: 'DIODE_6PULSE',
+    dc_link_choke_h: 0,
+    y_capacitance_f: 0,
   }
 }
 
@@ -63,6 +80,19 @@ function withFilterDefault(parameters: DeviceParameters): DeviceParameters {
   return {
     ...parameters,
     input_filter_quality: parameters.input_filter_quality ?? 0.45,
+    cm_choke_effectiveness: parameters.cm_choke_effectiveness ?? 0,
+    clock_frequency_mhz: parameters.clock_frequency_mhz ?? 48,
+    di_dt_a_per_us: parameters.di_dt_a_per_us ?? 200,
+    switching_device_type: parameters.switching_device_type ?? 'SI_IGBT',
+    dc_bus_voltage_v: parameters.dc_bus_voltage_v ?? 565,
+    dc_bus_esl_h: parameters.dc_bus_esl_h ?? 0,
+    dc_bus_esr_ohm: parameters.dc_bus_esr_ohm ?? 0,
+    dead_time_us: parameters.dead_time_us ?? 0,
+    spread_spectrum: parameters.spread_spectrum ?? false,
+    spread_spectrum_jitter: parameters.spread_spectrum_jitter ?? 0.1,
+    rectifier_type: parameters.rectifier_type ?? 'DIODE_6PULSE',
+    dc_link_choke_h: parameters.dc_link_choke_h ?? 0,
+    y_capacitance_f: parameters.y_capacitance_f ?? 0,
   }
 }
 
@@ -351,6 +381,7 @@ export default function App() {
           <ParameterInput
             specs={catalogue.parameters}
             pwmOptions={catalogue.pwm_modulation_types}
+            deviceOptions={catalogue.switching_device_types ?? []}
             parameters={parameters}
             deviceName={device?.name ?? 'Custom configuration'}
             isCustom={device === null}

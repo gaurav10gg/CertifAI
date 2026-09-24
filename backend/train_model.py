@@ -136,7 +136,7 @@ DESIGN_ONLY_FEATURE_NAMES: Tuple[str, ...] = tuple(
     spec.name for spec in DESIGN_FEATURE_SPECS
 )
 
-ARTIFACT_VERSION = "2.0.0"
+ARTIFACT_VERSION = "2.1.0"
 ENSEMBLE_SIZE = 5
 
 # Fraction of the dataset held out for validation, then for the final test split.
@@ -550,7 +550,7 @@ def train(n_samples: int, jobs: int, skip_stability: bool = False) -> Dict[str, 
         print(f"  {status} {finding['feature']:26s} "
               f"worst risk decrease {finding['worst_risk_decrease']:+.2e}")
 
-    print("\nFitting design-only ablation (6 features, no spectral inputs) ...")
+    print(f"\nFitting design-only ablation ({len(DESIGN_FEATURE_SPECS)} features, no spectral inputs) ...")
     ablation = design_only_ablation(
         x_raw, margins, y_fail, idx_train, idx_val, idx_test
     )
@@ -593,7 +593,7 @@ def train(n_samples: int, jobs: int, skip_stability: bool = False) -> Dict[str, 
         "band_metrics": [asdict(m) for m in metrics],
         "design_only_ablation": {
             "note": (
-                "Same models restricted to the six design parameters, with every "
+                "Same models restricted to the design parameters alone, with every "
                 "spectral feature removed. The headline models see "
                 "band_*_peak_dbuv, which is very nearly a sufficient statistic for "
                 "the margin label, so their scores are high by construction. These "

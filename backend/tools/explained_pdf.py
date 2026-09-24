@@ -993,7 +993,7 @@ def build() -> bytes:
         "<b>No measured hardware</b> is in the training loop. Every accuracy number is “how well the model copies our own simulator,” never “how well either matches a chamber.”",
         "<b>The limit line is a stand-in.</b> Direction and size of a design change are the reliable output. An absolute tier is only as good as that curve.",
         "<b>Lumped models.</b> Cable, shield and rectifier are first-order. They get the direction of change right. They do not know your cabinet’s private parasitics.",
-        "<b>Radiated emissions, immunity, and functional safety</b> are out of scope.",
+        "<b>Conducted emissions (150 kHz-30 MHz)</b> use a validated common-mode circuit model, with the same simulation-consistency validation as the rest of this tool. <b>Radiated emissions (30 MHz-1 GHz)</b> use a separate, more exploratory model based on clock-harmonic and loop-radiation theory — treat that score as a rough directional indicator only. Immunity and functional safety remain fully out of scope.",
         "<b>Acoustic and ripple numbers are proxies</b>, not microphone measurements and not a finite-element motor model.",
         "<b>calibrate.py</b> can absorb real chamber leftovers when a CSV exists. Until then, every figure stays relative to the simulator.",
     ]))

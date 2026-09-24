@@ -144,6 +144,9 @@ def render_spectrum_png(
     width_in: float = 7.0,
     height_in: float = 2.45,
     dpi: int = 200,
+    y_label: str = "Level (dB\u00b5V)",
+    emission_label: str = "Simulated emission (max-hold)",
+    limit_label: str = "Assumed limit (synthetic)",
 ) -> bytes:
     """Monochrome emission-vs-limit chart, matching the web app's chart styling."""
     frequency_mhz = [f / 1e6 for f in spectrum["frequency_hz"]]
@@ -161,9 +164,9 @@ def render_spectrum_png(
         facecolor="#0A0A0A", alpha=0.055, linewidth=0,
     )
     axes.plot(frequency_mhz, limit, color="#0A0A0A", linewidth=1.1,
-              linestyle=(0, (5, 3)), label="Assumed limit (synthetic)")
+              linestyle=(0, (5, 3)), label=limit_label)
     axes.plot(frequency_mhz, emission, color="#0A0A0A", linewidth=1.0,
-              label="Simulated emission (max-hold)")
+              label=emission_label)
 
     # Band boundaries as hairlines with labels along the top.
     for band in bands[:-1]:
@@ -177,7 +180,7 @@ def render_spectrum_png(
         max(max(emission), max(limit)) + 8,
     )
     axes.set_xlabel("Frequency (MHz)", fontsize=7.5, color="#4A4A4A")
-    axes.set_ylabel("Level (dB\u00b5V)", fontsize=7.5, color="#4A4A4A")
+    axes.set_ylabel(y_label, fontsize=7.5, color="#4A4A4A")
     axes.tick_params(labelsize=7, colors="#4A4A4A", width=0.5, length=3)
     axes.grid(True, which="major", color="#EDEDED", linewidth=0.5)
     axes.grid(True, which="minor", color="#F6F6F6", linewidth=0.4)
@@ -370,6 +373,68 @@ _BASE_TABLE_STYLE: List[Tuple[Any, ...]] = [
 ]
 
 
+def _advanced_parameter_rows(parameters: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Non-default advanced simulator inputs. Empty when the section was left closed."""
+    checks: List[Tuple[str, Any, str, str]] = [
+        ("dc_bus_voltage_v", 565.0, "DC bus voltage", "{:.0f} V"),
+        ("dc_bus_esl_h", 0.0, "Bus ESL", "{:.0f} nH"),
+        ("dc_bus_esr_ohm", 0.0, "Bus ESR", "{:.0f} m\u03a9"),
+        ("dc_link_choke_h", 0.0, "DC-link choke", "{:.2f} mH"),
+        ("y_capacitance_f", 0.0, "Y-capacitor", "{:.1f} nF"),
+        ("dead_time_us", 0.0, "Dead time", "{:.2f} \u00b5s"),
+        ("spread_spectrum", False, "Spread-spectrum carrier", "{}"),
+        ("spread_spectrum_jitter", 0.10, "Carrier dither", "\u00b1{:.0f} %"),
+        ("rectifier_type", "DIODE_6PULSE", "Rectifier", "{}"),
+    ]
+    scale = {
+        "dc_bus_esl_h": 1e9,
+        "dc_bus_esr_ohm": 1e3,
+        "dc_link_choke_h": 1e3,
+        "y_capacitance_f": 1e9,
+        "spread_spectrum_jitter": 100.0,
+    }
+    labels = {"DIODE_6PULSE": "6-pulse diode bridge", "ACTIVE_FRONT_END": "Active front end"}
+    rows: List[Tuple[str, str]] = []
+    spread_on = bool(parameters.get("spread_spectrum"))
+    for key, neutral, label, fmt in checks:
+        if key not in parameters:
+            continue
+        value = parameters[key]
+        if value == neutral:
+            continue
+        if key == "spread_spectrum_jitter" and not spread_on:
+            continue
+        if key == "spread_spectrum":
+            rows.append((label, "On"))
+            continue
+        if key == "rectifier_type":
+            rows.append((label, labels.get(str(value), str(value))))
+            continue
+        shown = float(value) * scale.get(key, 1.0)
+        rows.append((label, fmt.format(shown)))
+    return rows
+
+
+def _advanced_table(rows: Sequence[Tuple[str, str]]) -> Table:
+    data = [[label, value] for label, value in rows]
+    table = Table(data, colWidths=[CONTENT_WIDTH * 0.55, CONTENT_WIDTH * 0.45])
+    table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (0, -1), BODY_FONT),
+        ("FONTNAME", (1, 0), (1, -1), BOLD_FONT),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.4),
+        ("TEXTCOLOR", (0, 0), (0, -1), INK_MUTED),
+        ("TEXTCOLOR", (1, 0), (1, -1), INK),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.4, RULE),
+        ("BACKGROUND", (0, 0), (-1, -1), WASH),
+    ]))
+    return table
+
+
 def _configuration_table(parameter_display: Sequence[Dict[str, Any]]) -> Table:
     """Six design parameters as three rows of two label/value pairs.
 
@@ -418,7 +483,7 @@ def _configuration_table(parameter_display: Sequence[Dict[str, Any]]) -> Table:
     return table
 
 
-def _band_table(bands: Sequence[Dict[str, Any]]) -> Table:
+def _band_table(bands: Sequence[Dict[str, Any]], unit: str = "dB\u00b5V") -> Table:
     rows: List[List[Any]] = [[
         "Frequency band", "Peak", "Limit", "Margin", "Vs assumed limit",
     ]]
@@ -428,8 +493,8 @@ def _band_table(bands: Sequence[Dict[str, Any]]) -> Table:
         clear = band["predicted_margin_db"] > 0
         rows.append([
             band["label"],
-            f"{band['simulated_peak_dbuv']:.1f} dB\u00b5V",
-            f"{band['limit_at_peak_dbuv']:.1f} dB\u00b5V",
+            f"{band['simulated_peak_dbuv']:.1f} {unit}",
+            f"{band['limit_at_peak_dbuv']:.1f} {unit}",
             f"{band['predicted_margin_db']:+.1f} dB",
             (GLYPH_PASS + "  Clear") if clear else (GLYPH_FAIL + "  Exceeds"),
         ])
@@ -545,6 +610,60 @@ def _draw_page_furniture(canvas: Any, doc: Any) -> None:
     canvas.restoreState()
 
 
+def _radiated_block(radiated: Dict[str, Any]) -> KeepTogether:
+    """Visually quieter than the conducted score: wash, dashed frame, half-size figure."""
+    score = float(radiated.get("risk_score", 0))
+    score_style = ParagraphStyle(
+        "radiated_score",
+        fontName=BOLD_FONT,
+        fontSize=23,
+        leading=26,
+        textColor=INK,
+    )
+    inner: List[Any] = [
+        Paragraph("RADIATED EMISSIONS RISK", STYLES["section"]),
+        Paragraph(
+            f"{score:.0f}<font size='9' color='#9A9A9A'> / 100</font>"
+            f"&nbsp;&nbsp;<font size='8'>EXPLORATORY</font>",
+            score_style,
+        ),
+        Spacer(1, 3),
+        Paragraph(str(radiated.get("caption", "")), STYLES["body"]),
+        Spacer(1, 6),
+        Paragraph(str(radiated["top_factor"]["statement"]), STYLES["body"]),
+        Spacer(1, 6),
+    ]
+    chart = render_spectrum_png(
+        radiated["spectrum"],
+        radiated["bands"],
+        y_label="Level (dB\u00b5V/m)",
+        emission_label="Clock harmonics (exploratory)",
+        limit_label="Synthetic CISPR 11 Class A, 10 m",
+        height_in=2.1,
+    )
+    inner.append(Image(
+        io.BytesIO(chart),
+        width=CONTENT_WIDTH - 16,
+        height=(CONTENT_WIDTH - 16) * 2.1 / 7.0,
+    ))
+    inner.append(Spacer(1, 6))
+    inner.append(_band_table(radiated["bands"], unit="dB\u00b5V/m"))
+    inner.append(Spacer(1, 6))
+    inner.append(Paragraph(str(radiated.get("disclaimer", "")), STYLES["small"]))
+
+    wrapped = Table([[inner]], colWidths=[CONTENT_WIDTH])
+    wrapped.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), WASH),
+        ("BOX", (0, 0), (-1, -1), 0.8, RULE_STRONG, None, (2, 2)),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    return KeepTogether([wrapped])
+
+
 def build_certificate(result: Dict[str, Any]) -> bytes:
     """Render one assessment result to a PDF and return the bytes."""
     reference = assessment_reference(result)
@@ -642,6 +761,20 @@ def build_certificate(result: Dict[str, Any]) -> bytes:
     # --- Configuration ----------------------------------------------------
     story.append(Paragraph("ASSESSED CONFIGURATION", STYLES["section"]))
     story.append(_configuration_table(result["parameter_display"]))
+    advanced_rows = _advanced_parameter_rows(result.get("parameters") or {})
+    if advanced_rows:
+        story.append(Paragraph("ADDITIONAL SIMULATION PARAMETERS", STYLES["section"]))
+        story.append(Paragraph(
+            "These parameters shape the simulated waveforms and emission spectrum, "
+            "and affect the full-detail prediction. They are validated at the "
+            "simulator level, but are not yet named inputs to the explainable risk "
+            "model: the Why This Margin chart and What To Change Next list will "
+            "not mention them by name. Promoting them into that model would "
+            "require retraining and re-validating it.",
+            STYLES["small"],
+        ))
+        story.append(Spacer(1, 4))
+        story.append(_advanced_table(advanced_rows))
 
     # --- Risk factor ------------------------------------------------------
     # Page two carries the interpretation and the caveats. Breaking here is
@@ -751,6 +884,11 @@ def build_certificate(result: Dict[str, Any]) -> bytes:
             height=CONTENT_WIDTH * 3.6 / 7.0,
         ))
 
+    radiated = result.get("radiated")
+    if radiated:
+        story.append(PageBreak())
+        story.append(_radiated_block(radiated))
+
     # --- Methodology ------------------------------------------------------
     consistency = result["model_info"]["simulation_consistency"]
     ablation = consistency.get("design_only_ablation") or {}
@@ -792,7 +930,7 @@ def build_certificate(result: Dict[str, Any]) -> bytes:
     )
     if ablation.get("mean_balanced_accuracy") is not None:
         consistency_text += (
-            f" Restricted to the six design parameters alone, with all spectral "
+            f" Restricted to the design parameters alone, with all spectral "
             f"features removed, the same models reach "
             f"{ablation['mean_balanced_accuracy'] * 100:.1f}% balanced accuracy and "
             f"{ablation['mean_margin_mae_db']:.2f} dB mean margin error."
@@ -824,8 +962,13 @@ def build_certificate(result: Dict[str, Any]) -> bytes:
     story.append(Paragraph(
         "<b>Conducted emissions and power quality are separate.</b> The risk score "
         "is driven by common-mode conducted emissions. THD figures describe motor "
-        "and input current distortion and are not EMC limit comparisons. Radiated "
-        "emissions, immunity and functional-safety requirements are out of scope.",
+        "and input current distortion and are not EMC limit comparisons. "
+        "Conducted emissions (150 kHz-30 MHz) use a validated common-mode circuit "
+        "model, with the same simulation-consistency validation as the rest of "
+        "this tool. Radiated emissions (30 MHz-1 GHz) use a separate, more "
+        "exploratory model based on clock-harmonic and loop-radiation theory — "
+        "treat this score as a rough directional indicator only. Immunity and "
+        "functional-safety remain fully out of scope.",
         STYLES["body"],
     ))
 

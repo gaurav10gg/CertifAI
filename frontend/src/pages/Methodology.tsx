@@ -291,6 +291,17 @@ export function Methodology({
         </p>
       </Section>
 
+      {data.assumptions_scope ? (
+        <section>
+          <h3 className="text-base font-semibold tracking-tight text-ink">
+            Assumptions and limitations
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+            {data.assumptions_scope}
+          </p>
+        </section>
+      ) : null}
+
       <p className="border-t border-line pt-5 text-xs leading-relaxed text-ink-faint">
         {data.disclaimer_long}
       </p>

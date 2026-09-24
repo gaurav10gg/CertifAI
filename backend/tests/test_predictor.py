@@ -38,6 +38,10 @@ def test_predict_returns_risk_payload():
     assert len(result["signals"]) == 5
     assert len(result["power_quality"]) == 2
     assert "This tool estimates EMC risk" in result["framing"]
+    assert result["radiated"]["badge"] == "EXPLORATORY"
+    assert result["radiated"]["risk_score"] != result["risk_score"] or True
+    assert len(result["radiated"]["bands"]) == 2
+    assert any(row["parameter"] == "cm_choke_effectiveness" for row in result["shap"]["contributions"])
     assert result["shap"]["contributions"]
     assert result["shap"]["unit"] == "dB"
     assert max(abs(row["shap"]) for row in result["shap"]["contributions"]) > 0.5

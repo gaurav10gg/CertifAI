@@ -7,6 +7,7 @@
  */
 
 export type PwmModulationType = 'SPWM' | 'SVPWM' | 'DPWM' | 'RANDOM_SPWM'
+export type SwitchingDeviceType = 'SI_IGBT' | 'SIC_MOSFET' | 'GAN'
 
 export interface DeviceParameters {
   switching_frequency_khz: number
@@ -16,10 +17,29 @@ export interface DeviceParameters {
   load_current_a: number
   pwm_modulation_type: PwmModulationType
   input_filter_quality: number
+  cm_choke_effectiveness: number
+  clock_frequency_mhz: number
+  di_dt_a_per_us: number
+  switching_device_type: SwitchingDeviceType
+  dc_bus_voltage_v: number
+  dc_bus_esl_h: number
+  dc_bus_esr_ohm: number
+  dead_time_us: number
+  spread_spectrum: boolean
+  spread_spectrum_jitter: number
+  rectifier_type: 'DIODE_6PULSE' | 'ACTIVE_FRONT_END'
+  dc_link_choke_h: number
+  y_capacitance_f: number
 }
 
 export interface ParameterSpec {
-  key: keyof Omit<DeviceParameters, 'pwm_modulation_type'>
+  key: keyof Omit<
+    DeviceParameters,
+    | 'pwm_modulation_type'
+    | 'switching_device_type'
+    | 'spread_spectrum'
+    | 'rectifier_type'
+  >
   label: string
   unit: string
   min: number
@@ -36,6 +56,12 @@ export interface PwmOption {
   cm_penalty_db: number
 }
 
+export interface SwitchingDeviceOption {
+  value: SwitchingDeviceType
+  label: string
+  edge_multiplier: number
+}
+
 export interface DeviceProfile {
   id: string
   name: string
@@ -50,6 +76,7 @@ export interface DevicesResponse {
   devices: DeviceProfile[]
   parameters: ParameterSpec[]
   pwm_modulation_types: PwmOption[]
+  switching_device_types: SwitchingDeviceOption[]
   disclaimer: string
   framing?: string
 }
@@ -184,6 +211,28 @@ export interface ParameterDisplayRow {
   formatted: string
 }
 
+export interface RadiatedTopFactor {
+  key: string
+  label: string
+  shap_db: number
+  band: string
+  statement: string
+}
+
+export interface RadiatedAssessment {
+  title: string
+  badge: string
+  caption: string
+  disclaimer: string
+  risk_score: number
+  risk_level: RiskLevel
+  risk_label: string
+  top_factor: RadiatedTopFactor
+  bands: BandResult[]
+  spectrum: SpectrumTrace
+  limit_description: string
+}
+
 export interface PredictionResult {
   generated_at: string
   device_id: string | null
@@ -217,6 +266,7 @@ export interface PredictionResult {
   model_info: {
     artifact_version: string
     feature_count: number
+    design_feature_count?: number
     monotone_constraints: number[]
     simulation_consistency: SimulationConsistency
     ensemble_size?: number
@@ -228,6 +278,8 @@ export interface PredictionResult {
   }
   disclaimer: string
   disclaimer_long: string
+  assumptions_scope: string
+  radiated: RadiatedAssessment
 }
 
 export interface BandDiff {
@@ -329,6 +381,7 @@ export interface MethodologyResponse {
   }
   disclaimer: string
   disclaimer_long: string
+  assumptions_scope?: string
   framing?: string
 }
 

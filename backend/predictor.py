@@ -54,11 +54,13 @@ from simulate import (
     PARAMETER_RANGE_BY_KEY,
     PWM_CM_PENALTY_DB,
     PWM_MODULATION_LABELS,
+    SWITCHING_DEVICE_LABELS,
     DeviceParameters,
     simulate_device,
 )
 
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "certifai_models.joblib"
+RADIATED_MODEL_PATH = Path(__file__).resolve().parent / "models" / "radiated_models.joblib"
 
 # Compliance score mapping. A band exactly on the limit (0 dB margin) scores 50;
 # the tanh gives a smooth, bounded curve so a design 30 dB clear does not read as
@@ -105,6 +107,28 @@ DISCLAIMER_LONG: str = (
     "support early-stage design decisions. It does not replace accredited EMC "
     "certification testing (e.g. per EN 12016), and it does not predict "
     "certification outcomes."
+)
+
+SCOPE_STATEMENT: str = (
+    "Conducted emissions (150 kHz-30 MHz) use a validated common-mode circuit "
+    "model, with the same simulation-consistency validation as the rest of this "
+    "tool. Radiated emissions (30 MHz-1 GHz) use a separate, more exploratory "
+    "model based on clock-harmonic and loop-radiation theory — treat this score "
+    "as a rough directional indicator only. Immunity and functional-safety "
+    "remain fully out of scope."
+)
+
+RADIATED_CAPTION: str = (
+    "Lower confidence than the conducted score above — this model has less "
+    "validation history in this tool."
+)
+
+RADIATED_DISCLAIMER: str = (
+    "This radiated-emissions estimate uses each band's own peak level as one "
+    "of its inputs, so its low error describes agreement with this tool's own "
+    "simulation, not a chamber measurement. The limit line shown is a synthetic "
+    "step anchored on publicly described CISPR 11 Group 1 Class A values at "
+    "10 m — it is not the normative EN 12016 limit."
 )
 
 RISK_TIERS: Tuple[Tuple[float, str, str], ...] = (
@@ -316,9 +340,14 @@ _SUGGESTIONS: Dict[str, str] = {
         "directly with length and is usually the largest single contributor."
     ),
     "shielding_quality": (
-        "Improve the screen: 360-degree gland terminations at both ends plus a "
-        "common-mode choke on the motor leads, targeting an effectiveness of about "
-        "{target:.2f}. This is normally the cheapest large improvement."
+        "Improve the screen: 360-degree gland terminations at both ends, "
+        "targeting an effectiveness of about {target:.0%}. This is normally "
+        "the cheapest large improvement."
+    ),
+    "cm_choke_effectiveness": (
+        "Fit a common-mode choke on the motor leads. A ferrite or toroid "
+        "suppresses the same common-mode current this conducted score is built "
+        "on. Aim for about {target:.0%} of a full 2 mH choke into the 50 ohm LISN."
     ),
     "load_current_a": (
         "Re-assess at a lower duty point, or de-rate towards {target:.0f} A. "
@@ -356,7 +385,7 @@ def _suggested_target(key: str, current: float) -> float:
         return min(PWM_CM_PENALTY_DB.values())
 
     rge = PARAMETER_RANGE_BY_KEY[key]
-    if key == "shielding_quality":
+    if key in ("shielding_quality", "cm_choke_effectiveness"):
         target = current + _SHIELDING_STEP
     else:
         target = current * _MULTIPLICATIVE_STEP[key]
@@ -532,7 +561,7 @@ def _shap_waterfall(
         "predicted_margin_db": round(predicted, 3),
         "note": (
             "Exact tree SHAP values from the design-only margin model "
-            "(6 parameters, no spectral shortcut) for "
+            f"({len(names)} design parameters, no spectral shortcut) for "
             f"{band_label}, the band with the least predicted headroom. "
             "Positive values increase predicted margin (more headroom); "
             "negative values reduce it."
@@ -689,6 +718,118 @@ def _serialize_power_quality(extracted: FeatureBundle) -> List[Dict[str, Any]]:
     return rows
 
 
+# Drivers the radiated headline may name. Band peak levels are model inputs, so
+# they are left out of this ranking; otherwise the "cause" would always be the
+# peak the model was just shown.
+_RADIATED_DRIVER_GROUPS: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
+    ("clock_frequency_mhz", "Clock frequency", ("clock_frequency_mhz",)),
+    ("di_dt_a_per_us", "di/dt", ("di_dt_a_per_us",)),
+    (
+        "cable_resonance",
+        "Cable resonance",
+        ("cable_length_m", "rad_low_resonance", "rad_high_resonance"),
+    ),
+)
+
+
+@lru_cache(maxsize=1)
+def load_radiated_models() -> Dict[str, Any]:
+    if not RADIATED_MODEL_PATH.exists():
+        raise ModelNotTrainedError(
+            f"No radiated models at {RADIATED_MODEL_PATH}. "
+            "Run: python tools/train_radiated.py"
+        )
+    return joblib.load(RADIATED_MODEL_PATH)
+
+
+def _radiated_assessment(params: DeviceParameters) -> Dict[str, Any]:
+    """Separate 30 MHz-1 GHz score. Never blended into the conducted score."""
+    from radiated import (
+        RADIATED_LIMIT_DESCRIPTION,
+        radiated_features,
+        radiated_spectrum,
+    )
+
+    bundle = load_radiated_models()
+    vector, physics = radiated_features(params)
+    spectrum = radiated_spectrum(params)
+    scaled = bundle["scaler"].transform(vector.reshape(1, -1))
+    predicted = [float(reg.predict(scaled)[0]) for reg in bundle["regressors"]]
+    score = _compliance_score(predicted)
+    level = _risk_level(score)
+    worst = int(np.argmin(predicted))
+
+    regressor = bundle["regressors"][worst]
+    contrib = np.asarray(
+        regressor.get_booster().predict(
+            xgb.DMatrix(scaled), pred_contribs=True, validate_features=False
+        )
+    )[0]
+    names = list(bundle["feature_names"])
+    shap_by_name = {name: float(contrib[index]) for index, name in enumerate(names)}
+
+    ranked: List[Tuple[float, str, str, float]] = []
+    for key, label, members in _RADIATED_DRIVER_GROUPS:
+        total = float(sum(shap_by_name.get(member, 0.0) for member in members))
+        ranked.append((abs(total), key, label, total))
+    ranked.sort(key=lambda row: row[0], reverse=True)
+    _magnitude, top_key, top_label, top_shap = ranked[0]
+    band_label = str(physics[worst]["label"])
+
+    bands: List[Dict[str, Any]] = []
+    mae = list(bundle.get("test_mae_db") or [0.0, 0.0])
+    for index, row in enumerate(physics):
+        margin = predicted[index]
+        bands.append({
+            "key": row["key"],
+            "label": row["label"],
+            "f_low_hz": row["f_low_hz"],
+            "f_high_hz": row["f_high_hz"],
+            "passes": bool(margin > 0.0),
+            "fail_probability": 0.0,
+            "predicted_margin_db": round(margin, 2),
+            "band_score": round(_band_score(margin), 1),
+            "margin_uncertainty_db": round(float(mae[index]), 2),
+            "simulated_margin_db": round(float(row["margin_db"]), 2),
+            "simulated_peak_dbuv": round(float(row["peak_dbuvm"]), 1),
+            "simulated_peak_frequency_hz": round(float(row["peak_frequency_hz"]), 0),
+            "limit_at_peak_dbuv": round(float(row["limit_dbuvm"]), 1),
+            "worst_frequency_hz": round(float(row["peak_frequency_hz"]), 0),
+            "harmonic_count": int(row["n_lines"]),
+            "thd_score_db": 0.0,
+        })
+
+    return {
+        "title": "Radiated Emissions Risk (Exploratory)",
+        "badge": "EXPLORATORY",
+        "caption": RADIATED_CAPTION,
+        "disclaimer": RADIATED_DISCLAIMER,
+        "risk_score": round(score, 1),
+        "risk_level": level["key"],
+        "risk_label": level["label"],
+        "top_factor": {
+            "key": top_key,
+            "label": top_label,
+            "shap_db": round(float(top_shap), 3),
+            "band": band_label,
+            "statement": (
+                f"{top_label} ranks highest among clock frequency, di/dt and "
+                f"cable resonance for {band_label} "
+                f"({float(top_shap):+.2f} dB on the predicted margin). "
+                f"The band peak, which this model also takes as an input, "
+                f"accounts for most of the margin."
+            ),
+        },
+        "bands": bands,
+        "spectrum": {
+            "frequency_hz": [round(float(f), 1) for f in spectrum["frequency_hz"]],
+            "emission_dbuv": [round(float(v), 2) for v in spectrum["emission_dbuvm"]],
+            "limit_dbuv": [round(float(v), 2) for v in spectrum["limit_dbuvm"]],
+        },
+        "limit_description": RADIATED_LIMIT_DESCRIPTION,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -756,6 +897,7 @@ def predict(
     )
     shap = _shap_waterfall(models, extracted.feature_vector, worst_index)
     measures = _countermeasures(risk_factor["ranking"], params, n=3)
+    radiated = _radiated_assessment(params)
     sensitivity = _model_sensitivity(models, extracted.feature_vector, compliance_score)
 
     spectrum = extracted.spectrum
@@ -808,6 +950,7 @@ def predict(
         "model_info": {
             "artifact_version": models.artifact_version,
             "feature_count": len(FEATURE_NAMES),
+            "design_feature_count": len(DESIGN_FEATURE_SPECS),
             "monotone_constraints": list(MONOTONE_CONSTRAINTS_RISK),
             "simulation_consistency": consistency,
             "ensemble_size": len(models.ensemble_regressors),
@@ -819,17 +962,22 @@ def predict(
         },
         "disclaimer": DISCLAIMER_SHORT,
         "disclaimer_long": DISCLAIMER_LONG,
+        "assumptions_scope": SCOPE_STATEMENT,
+        "radiated": radiated,
     }
 
 
 def _parameter_display(params: DeviceParameters) -> List[Dict[str, Any]]:
     """Human-readable parameter rows for the results page and the PDF."""
     rows: List[Dict[str, Any]] = []
-    for key in ("switching_frequency_khz", "dv_dt_v_per_us", "cable_length_m",
-                "shielding_quality", "load_current_a", "input_filter_quality"):
+    for key in (
+        "switching_frequency_khz", "dv_dt_v_per_us", "di_dt_a_per_us",
+        "cable_length_m", "shielding_quality", "load_current_a",
+        "input_filter_quality", "cm_choke_effectiveness", "clock_frequency_mhz",
+    ):
         rge = PARAMETER_RANGE_BY_KEY[key]
         value = float(getattr(params, key))
-        if key in ("shielding_quality", "input_filter_quality"):
+        if key in ("shielding_quality", "input_filter_quality", "cm_choke_effectiveness"):
             # Stored 0-1, but shown as a percentage everywhere it is entered or
             # read, so the display must match rather than expose the raw fraction.
             formatted = f"{value * 100:.0f} %"
@@ -848,6 +996,13 @@ def _parameter_display(params: DeviceParameters) -> List[Dict[str, Any]]:
         "unit": "",
         "value": params.pwm_modulation_type,
         "formatted": PWM_MODULATION_LABELS[params.pwm_modulation_type],
+    })
+    rows.append({
+        "key": "switching_device_type",
+        "label": "Switching Device",
+        "unit": "",
+        "value": params.switching_device_type,
+        "formatted": SWITCHING_DEVICE_LABELS[params.switching_device_type],
     })
     return rows
 

@@ -52,6 +52,7 @@ from predictor import (
     DISCLAIMER_LONG,
     DISCLAIMER_SHORT,
     RISK_FRAMING,
+    SCOPE_STATEMENT,
     ModelNotTrainedError,
     compare_assessments,
     load_models,
@@ -72,6 +73,9 @@ from simulate import (
     PWM_MODULATION_LABELS,
     PWM_MODULATION_TYPES,
     SAMPLE_RATE_HZ,
+    SWITCHING_DEVICE_EDGE_MULTIPLIER,
+    SWITCHING_DEVICE_LABELS,
+    SWITCHING_DEVICE_TYPES,
     DeviceParameters,
 )
 
@@ -121,6 +125,19 @@ class DeviceParametersIn(BaseModel):
     load_current_a: float = Field(..., ge=5.0, le=200.0)
     pwm_modulation_type: PwmType = "SPWM"
     input_filter_quality: float = Field(0.45, ge=0.0, le=1.0)
+    cm_choke_effectiveness: float = Field(0.0, ge=0.0, le=1.0)
+    clock_frequency_mhz: float = Field(48.0, ge=20.0, le=200.0)
+    di_dt_a_per_us: float = Field(200.0, ge=20.0, le=2000.0)
+    switching_device_type: Literal["SI_IGBT", "SIC_MOSFET", "GAN"] = "SI_IGBT"
+    dc_bus_voltage_v: float = Field(565.0, ge=400.0, le=800.0)
+    dc_bus_esl_h: float = Field(0.0, ge=0.0, le=500e-9)
+    dc_bus_esr_ohm: float = Field(0.0, ge=0.0, le=1.0)
+    dead_time_us: float = Field(0.0, ge=0.0, le=5.0)
+    spread_spectrum: bool = False
+    spread_spectrum_jitter: float = Field(0.10, ge=0.0, le=0.40)
+    rectifier_type: Literal["DIODE_6PULSE", "ACTIVE_FRONT_END"] = "DIODE_6PULSE"
+    dc_link_choke_h: float = Field(0.0, ge=0.0, le=5e-3)
+    y_capacitance_f: float = Field(0.0, ge=0.0, le=100e-9)
 
     def to_domain(self) -> DeviceParameters:
         return DeviceParameters(**self.model_dump())
@@ -253,6 +270,14 @@ def devices() -> Dict[str, Any]:
             }
             for name in PWM_MODULATION_TYPES
         ],
+        "switching_device_types": [
+            {
+                "value": name,
+                "label": SWITCHING_DEVICE_LABELS[name],
+                "edge_multiplier": SWITCHING_DEVICE_EDGE_MULTIPLIER[name],
+            }
+            for name in SWITCHING_DEVICE_TYPES
+        ],
         "disclaimer": DISCLAIMER_SHORT,
         "framing": RISK_FRAMING,
     }
@@ -347,6 +372,7 @@ def methodology() -> Dict[str, Any]:
         },
         "disclaimer": DISCLAIMER_SHORT,
         "disclaimer_long": DISCLAIMER_LONG,
+        "assumptions_scope": SCOPE_STATEMENT,
         "framing": RISK_FRAMING,
     }
 

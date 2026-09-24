@@ -152,6 +152,11 @@ DESIGN_FEATURE_SPECS: Final[Tuple[FeatureSpec, ...]] = (
         "PWM removes about a third of all commutations) and by whether the "
         "strategy injects a zero-sequence component.",
     ),
+    FeatureSpec(
+        "cm_choke_effectiveness", -1,
+        "A series common-mode choke is a first-order low-pass into the LISN. "
+        "More choke can only attenuate the conducted common-mode current.",
+    ),
 )
 
 _BAND_FEATURE_TEMPLATES: Final[Tuple[Tuple[str, int, str], ...]] = (
@@ -554,6 +559,7 @@ def extract_features(sim: SimulationResult) -> FeatureBundle:
     params = sim.parameters
     design_values = [getattr(params, key) for key in ML_PARAMETER_KEYS]
     design_values.append(float(params.pwm_cm_penalty_db))
+    design_values.append(float(params.cm_choke_effectiveness))
 
     band_values: List[float] = []
     for band in bands:

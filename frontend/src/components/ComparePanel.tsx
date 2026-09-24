@@ -19,7 +19,11 @@ import { riskBadgeClass } from './ScoreDisplay'
  * runs the comparison, so exploring a fix does not overwrite the assessment.
  */
 
-const PERCENT_KEYS = new Set(['shielding_quality', 'input_filter_quality'])
+const PERCENT_KEYS = new Set([
+  'shielding_quality',
+  'input_filter_quality',
+  'cm_choke_effectiveness',
+])
 
 function nudge(
   parameters: DeviceParameters,

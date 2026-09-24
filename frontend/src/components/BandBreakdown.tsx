@@ -44,7 +44,15 @@ function formatHz(hz: number): string {
   return `${(hz / 1e3).toFixed(0)} kHz`
 }
 
-export function BandBreakdown({ bands }: { bands: BandResult[] }) {
+export function BandBreakdown({
+  bands,
+  unit = 'dBµV',
+  showUncertainty = true,
+}: {
+  bands: BandResult[]
+  unit?: string
+  showUncertainty?: boolean
+}) {
   return (
     <div className="divide-y divide-line">
       {/* Column headers, hidden on small screens where the layout stacks. */}
@@ -79,13 +87,13 @@ export function BandBreakdown({ bands }: { bands: BandResult[] }) {
             <p className="text-sm tabular text-ink sm:text-right">
               <span className="text-2xs text-ink-faint sm:hidden">Peak </span>
               {band.simulated_peak_dbuv.toFixed(1)}
-              <span className="text-2xs text-ink-faint"> dBµV</span>
+              <span className="text-2xs text-ink-faint"> {unit}</span>
             </p>
 
             <p className="text-sm tabular text-ink-muted sm:text-right">
               <span className="text-2xs text-ink-faint sm:hidden">Limit </span>
               {band.limit_at_peak_dbuv.toFixed(1)}
-              <span className="text-2xs text-ink-faint"> dBµV</span>
+              <span className="text-2xs text-ink-faint"> {unit}</span>
             </p>
 
             <div className="col-span-2 sm:col-span-1">
@@ -100,12 +108,19 @@ export function BandBreakdown({ bands }: { bands: BandResult[] }) {
                   {band.predicted_margin_db.toFixed(1)} dB
                 </span>
               </div>
-              <p className="mt-1 text-2xs tabular text-ink-faint">
-                ±{band.margin_uncertainty_db.toFixed(1)} dB model error · simulated{' '}
-                {band.simulated_margin_db >= 0 ? '+' : ''}
-                {band.simulated_margin_db.toFixed(1)} dB
-                {agrees ? '' : ' · prediction and simulation disagree'}
-              </p>
+              {showUncertainty ? (
+                <p className="mt-1 text-2xs tabular text-ink-faint">
+                  ±{band.margin_uncertainty_db.toFixed(1)} dB model error · simulated{' '}
+                  {band.simulated_margin_db >= 0 ? '+' : ''}
+                  {band.simulated_margin_db.toFixed(1)} dB
+                  {agrees ? '' : ' · prediction and simulation disagree'}
+                </p>
+              ) : (
+                <p className="mt-1 text-2xs tabular text-ink-faint">
+                  Simulated margin {band.simulated_margin_db >= 0 ? '+' : ''}
+                  {band.simulated_margin_db.toFixed(1)} dB
+                </p>
+              )}
             </div>
 
             <div className="col-span-2 flex sm:col-span-1 sm:justify-end">

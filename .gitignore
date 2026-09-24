@@ -24,6 +24,7 @@ backend/models/*
 !backend/models/margin_regressor_design_only_band_a.joblib
 !backend/models/margin_regressor_design_only_band_b.joblib
 !backend/models/margin_regressor_design_only_band_c.joblib
+!backend/models/radiated_models.joblib
 
 # Generated assessment documents and scratch output
 *.pdf

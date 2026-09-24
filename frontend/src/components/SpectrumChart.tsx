@@ -48,8 +48,6 @@ type ChartPoint = {
   exceedance: number | null
 }
 
-const BAND_DIVIDERS_MHZ = [0.5, 5]
-
 function formatFrequency(mhz: number): string {
   if (mhz < 1) return `${Math.round(mhz * 1000)}k`
   return `${mhz % 1 === 0 ? mhz : mhz.toFixed(1)}M`
@@ -58,9 +56,11 @@ function formatFrequency(mhz: number): string {
 function ChartTooltip({
   active,
   payload,
+  unit = 'dBµV',
 }: {
   active?: boolean
   payload?: { payload: ChartPoint }[]
+  unit?: string
 }) {
   if (!active || !payload?.length) return null
   const point = payload[0].payload
@@ -77,11 +77,11 @@ function ChartTooltip({
       <dl className="mt-1.5 space-y-0.5 tabular text-ink-muted">
         <div className="flex justify-between gap-4">
           <dt>Emission</dt>
-          <dd className="text-ink">{point.emission.toFixed(1)} dBµV</dd>
+          <dd className="text-ink">{point.emission.toFixed(1)} {unit}</dd>
         </div>
         <div className="flex justify-between gap-4">
           <dt>Limit</dt>
-          <dd className="text-ink">{point.limit.toFixed(1)} dBµV</dd>
+          <dd className="text-ink">{point.limit.toFixed(1)} {unit}</dd>
         </div>
         <div className="flex justify-between gap-4">
           <dt>Margin</dt>
@@ -98,9 +98,25 @@ function ChartTooltip({
 export function SpectrumChart({
   spectrum,
   bands,
+  eyebrow = 'Emission spectrum',
+  subtitle = 'Simulated max-hold trace against the assumed limit line, 9 kHz resolution bandwidth.',
+  unit = 'dBµV',
+  yLabel = 'dBµV',
+  xTicks = [0.15, 0.3, 0.5, 1, 2, 5, 10, 20, 30],
+  dividersMhz = [0.5, 5],
+  chartId = 'conducted',
+  showDots = false,
 }: {
   spectrum: SpectrumTrace
   bands: BandResult[]
+  eyebrow?: string
+  subtitle?: string
+  unit?: string
+  yLabel?: string
+  xTicks?: number[]
+  dividersMhz?: number[]
+  chartId?: string
+  showDots?: boolean
 }) {
   const { yMin, yMax } = useMemo(() => {
     const values = [...spectrum.emission_dbuv, ...spectrum.limit_dbuv]
@@ -132,11 +148,8 @@ export function SpectrumChart({
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <Eyebrow>Emission spectrum</Eyebrow>
-          <p className="mt-1 text-sm text-ink-muted">
-            Simulated max-hold trace against the assumed limit line, 9 kHz
-            resolution bandwidth.
-          </p>
+          <Eyebrow>{eyebrow}</Eyebrow>
+          <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>
         </div>
 
         <div className="flex items-center gap-4 text-xs text-ink-muted">
@@ -178,7 +191,7 @@ export function SpectrumChart({
           >
             <defs>
               {/* Non-compliant region: ink wash above the limit line. */}
-              <linearGradient id="limitZone" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={`${chartId}-limitZone`} x1="0" y1="0" x2="0" y2="1">
                 <stop
                   offset="0%"
                   stopColor="rgb(var(--chart-zone))"
@@ -203,7 +216,7 @@ export function SpectrumChart({
               type="number"
               scale="log"
               domain={['dataMin', 'dataMax']}
-              ticks={[0.15, 0.3, 0.5, 1, 2, 5, 10, 20, 30]}
+              ticks={xTicks}
               tickFormatter={formatFrequency}
               tick={{ fill: 'rgb(var(--ink-faint))', fontSize: 11 }}
               stroke="rgb(var(--line))"
@@ -223,7 +236,7 @@ export function SpectrumChart({
               tickLine={false}
               width={46}
               label={{
-                value: 'dBµV',
+                value: yLabel,
                 angle: -90,
                 position: 'insideLeft',
                 offset: 14,
@@ -233,7 +246,7 @@ export function SpectrumChart({
             />
 
             {/* Band boundaries, as faint verticals. */}
-            {BAND_DIVIDERS_MHZ.map((mhz) => (
+            {dividersMhz.map((mhz) => (
               <ReferenceLine
                 key={mhz}
                 x={mhz}
@@ -259,7 +272,7 @@ export function SpectrumChart({
               dataKey="zoneHeight"
               stackId="zone"
               stroke="none"
-              fill="url(#limitZone)"
+              fill={`url(#${chartId}-limitZone)`}
               isAnimationActive={false}
               activeDot={false}
             />
@@ -278,7 +291,7 @@ export function SpectrumChart({
               dataKey="emission"
               stroke="rgb(var(--ink))"
               strokeWidth={1.4}
-              dot={false}
+              dot={showDots ? { r: 2.5, fill: 'rgb(var(--ink))' } : false}
               animationDuration={600}
             />
             {/* Redraw the emission curve in the fail colour over exactly the
@@ -296,7 +309,7 @@ export function SpectrumChart({
             ) : null}
 
             <RechartsTooltip
-              content={<ChartTooltip />}
+              content={<ChartTooltip unit={unit} />}
               cursor={{ stroke: 'rgb(var(--line-strong))', strokeWidth: 1 }}
             />
           </ComposedChart>
@@ -304,7 +317,10 @@ export function SpectrumChart({
       </div>
 
       {/* Band ranges, aligned conceptually with the chart's three regions. */}
-      <div className="mt-3 grid grid-cols-3 gap-2 border-t border-line pt-3">
+      <div
+        className="mt-3 grid gap-2 border-t border-line pt-3"
+        style={{ gridTemplateColumns: `repeat(${Math.max(bands.length, 1)}, minmax(0, 1fr))` }}
+      >
         {bands.map((band) => (
           <div key={band.key} className="text-center">
             <p className="text-2xs uppercase tracking-label text-ink-faint">

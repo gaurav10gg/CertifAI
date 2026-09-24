@@ -1,17 +1,17 @@
 {
-  "generated_at": "2026-09-16T13:48:53+00:00",
-  "artifact_version": "2.0.0",
+  "generated_at": "2026-09-24T08:26:19+00:00",
+  "artifact_version": "2.1.0",
   "passed": true,
   "headlines": {
     "monotonicity": "Monotonicity verified across 200 randomized configurations: 100% consistent.",
-    "shap_additivity": "SHAP additivity verified: mean error 7.8e-6."
+    "shap_additivity": "SHAP additivity verified: mean error 9.6e-6."
   },
   "monotonicity": {
     "passed": true,
     "headline": "Monotonicity verified across 200 randomized configurations: 100% consistent.",
     "n_configs": 200,
     "n_steps": 8,
-    "n_checks": 1200,
+    "n_checks": 1400,
     "n_violations": 0,
     "consistent_percent": 100.0,
     "per_feature": {
@@ -50,6 +50,12 @@
         "checked": 200,
         "violations": 0,
         "risk_sign": 1
+      },
+      "cm_choke_effectiveness": {
+        "label": "CM choke effectiveness",
+        "checked": 200,
+        "violations": 0,
+        "risk_sign": -1
       }
     },
     "first_failures": [],
@@ -57,31 +63,31 @@
   },
   "shap_additivity": {
     "passed": true,
-    "headline": "SHAP additivity verified: mean error 7.8e-6.",
+    "headline": "SHAP additivity verified: mean error 9.6e-6.",
     "n_designs": 200,
     "n_checks": 600,
-    "mean_abs_error_db": 7.836139799716572e-06,
-    "max_abs_error_db": 5.1021575927734375e-05,
-    "mean_abs_error_display": "7.8e-6",
-    "max_abs_error_display": "5.1e-5",
+    "mean_abs_error_db": 9.572144093302388e-06,
+    "max_abs_error_db": 4.978477954864502e-05,
+    "mean_abs_error_display": "9.6e-6",
+    "max_abs_error_display": "5.0e-5",
     "per_band": [
       {
         "band": "150 kHz - 500 kHz",
         "n": 200,
-        "mean_abs_error_db": 7.550286827608943e-06,
-        "max_abs_error_db": 3.3915042877197266e-05
+        "mean_abs_error_db": 1.208354253321886e-05,
+        "max_abs_error_db": 4.978477954864502e-05
       },
       {
         "band": "500 kHz - 5 MHz",
         "n": 200,
-        "mean_abs_error_db": 7.125490228645504e-06,
-        "max_abs_error_db": 5.1021575927734375e-05
+        "mean_abs_error_db": 9.425380267202853e-06,
+        "max_abs_error_db": 3.170967102050781e-05
       },
       {
         "band": "5 MHz - 30 MHz",
         "n": 200,
-        "mean_abs_error_db": 8.83264234289527e-06,
-        "max_abs_error_db": 3.585219383239746e-05
+        "mean_abs_error_db": 7.207509479485453e-06,
+        "max_abs_error_db": 2.625584602355957e-05
       }
     ],
     "note": "Exact tree SHAP (XGBoost pred_contribs) on the design-only margin regressors. The identity is sum(SHAP) + bias \u2248 predicted margin (dB). This is a check that the waterfall is an accounting of the model, not a hardware claim."
@@ -97,47 +103,48 @@
         "cable_length_m",
         "shielding_quality",
         "load_current_a",
-        "pwm_cm_penalty_db"
+        "pwm_cm_penalty_db",
+        "cm_choke_effectiveness"
       ],
       "band_metrics": [
         {
           "band_key": "band_a",
           "band_label": "150 kHz - 500 kHz",
-          "fail_rate": 0.3466666666666667,
-          "classifier_accuracy": 0.9653333333333334,
-          "classifier_balanced_accuracy": 0.964442700156986,
-          "classifier_roc_auc": 0.9963265306122449,
-          "margin_mae_db": 1.0592337691425073,
-          "margin_rmse_db": 1.4209693136046213,
-          "margin_r2": 0.9915093402636123,
-          "classifier_best_iteration": 599,
-          "regressor_best_iteration": 330
+          "fail_rate": 0.02,
+          "classifier_accuracy": 0.9893333333333333,
+          "classifier_balanced_accuracy": 0.9945578231292518,
+          "classifier_roc_auc": 0.9979138321995465,
+          "margin_mae_db": 2.204312985697571,
+          "margin_rmse_db": 2.825299977223272,
+          "margin_r2": 0.9357574632096387,
+          "classifier_best_iteration": 530,
+          "regressor_best_iteration": 323
         },
         {
           "band_key": "band_b",
           "band_label": "500 kHz - 5 MHz",
-          "fail_rate": 0.36933333333333335,
-          "classifier_accuracy": 0.9706666666666667,
-          "classifier_balanced_accuracy": 0.9715083841521588,
-          "classifier_roc_auc": 0.9971454957602217,
-          "margin_mae_db": 1.2287398280120114,
-          "margin_rmse_db": 1.6271149853358806,
-          "margin_r2": 0.9891712018851735,
-          "classifier_best_iteration": 599,
-          "regressor_best_iteration": 330
+          "fail_rate": 0.014666666666666666,
+          "classifier_accuracy": 0.9893333333333333,
+          "classifier_balanced_accuracy": 0.9050313691720999,
+          "classifier_roc_auc": 0.9971706236929513,
+          "margin_mae_db": 2.3560169107951467,
+          "margin_rmse_db": 3.050184274104792,
+          "margin_r2": 0.91950272795485,
+          "classifier_best_iteration": 598,
+          "regressor_best_iteration": 325
         },
         {
           "band_key": "band_c",
           "band_label": "5 MHz - 30 MHz",
-          "fail_rate": 0.064,
-          "classifier_accuracy": 0.9773333333333334,
-          "classifier_balanced_accuracy": 0.9393696581196581,
-          "classifier_roc_auc": 0.9943613485280152,
-          "margin_mae_db": 1.8823987336500743,
-          "margin_rmse_db": 2.4825880801709803,
-          "margin_r2": 0.9715626202125509,
-          "classifier_best_iteration": 599,
-          "regressor_best_iteration": 311
+          "fail_rate": 0.0013333333333333333,
+          "classifier_accuracy": 0.9986666666666667,
+          "classifier_balanced_accuracy": 0.5,
+          "classifier_roc_auc": 1.0,
+          "margin_mae_db": 2.8061238490108438,
+          "margin_rmse_db": 3.463877849883043,
+          "margin_r2": 0.5261521730772196,
+          "classifier_best_iteration": 142,
+          "regressor_best_iteration": 127
         }
       ]
     }
