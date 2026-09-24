@@ -347,7 +347,7 @@ _SUGGESTIONS: Dict[str, str] = {
     "cm_choke_effectiveness": (
         "Fit a common-mode choke on the motor leads. A ferrite or toroid "
         "suppresses the same common-mode current this conducted score is built "
-        "on. Aim for about {target:.0%} of a full 2 mH choke into the 50 ohm LISN."
+        "on. Aim for about {target:.1f} mH into the 50 ohm LISN."
     ),
     "load_current_a": (
         "Re-assess at a lower duty point, or de-rate towards {target:.0f} A. "
@@ -494,6 +494,10 @@ def _risk_factor(
         current_display = current_value
 
     target = _suggested_target(key, current_value)
+    shown_target = target * 2.0 if key == "cm_choke_effectiveness" else target
+    if key == "cm_choke_effectiveness":
+        current_display = round(float(current_value) * 2.0, 2)
+        unit = "mH"
     band = EMC_BANDS[band_index]
 
     if band_fails:
@@ -513,13 +517,13 @@ def _risk_factor(
         "unit": unit,
         "current_value": current_display,
         "suggested_value": (
-            "DPWM" if key == "pwm_cm_penalty_db" else round(target, 2)
+            "DPWM" if key == "pwm_cm_penalty_db" else round(shown_target, 2)
         ),
         "attribution_score": round(score, 4),
         "driving_band": band.key,
         "driving_band_label": band.label,
         "statement": statement,
-        "suggestion": _SUGGESTIONS[key].format(target=target),
+        "suggestion": _SUGGESTIONS[key].format(target=shown_target),
         "ranking": [
             {"parameter": name, "attribution_score": round(value, 4)}
             for value, name in ranked
@@ -592,12 +596,14 @@ def _countermeasures(
         rge = PARAMETER_RANGE_BY_KEY[key]
         current = float(getattr(params, key))
         target = _suggested_target(key, current)
+        shown_current = current * 2.0 if key == "cm_choke_effectiveness" else current
+        shown_target = target * 2.0 if key == "cm_choke_effectiveness" else target
         items.append({
             "parameter": key,
             "label": rge.label,
-            "suggestion": _SUGGESTIONS[key].format(target=target),
-            "current_value": round(current, 2),
-            "suggested_value": round(target, 2),
+            "suggestion": _SUGGESTIONS[key].format(target=shown_target),
+            "current_value": round(shown_current, 2),
+            "suggested_value": round(shown_target, 2),
         })
     return items
 
@@ -977,10 +983,12 @@ def _parameter_display(params: DeviceParameters) -> List[Dict[str, Any]]:
     ):
         rge = PARAMETER_RANGE_BY_KEY[key]
         value = float(getattr(params, key))
-        if key in ("shielding_quality", "input_filter_quality", "cm_choke_effectiveness"):
+        if key in ("shielding_quality", "input_filter_quality"):
             # Stored 0-1, but shown as a percentage everywhere it is entered or
             # read, so the display must match rather than expose the raw fraction.
             formatted = f"{value * 100:.0f} %"
+        elif key == "cm_choke_effectiveness":
+            formatted = f"{value * 2:.1f} mH"
         else:
             formatted = f"{value:,.0f}" + (f" {rge.unit}" if rge.unit else "")
         rows.append({

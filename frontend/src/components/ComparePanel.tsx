@@ -19,11 +19,8 @@ import { riskBadgeClass } from './ScoreDisplay'
  * runs the comparison, so exploring a fix does not overwrite the assessment.
  */
 
-const PERCENT_KEYS = new Set([
-  'shielding_quality',
-  'input_filter_quality',
-  'cm_choke_effectiveness',
-])
+const PERCENT_KEYS = new Set(['shielding_quality', 'input_filter_quality'])
+const CM_CHOKE_MAX_MH = 2
 
 function nudge(
   parameters: DeviceParameters,
@@ -132,22 +129,26 @@ export function ComparePanel({
       <dl className="mt-4 grid gap-2 sm:grid-cols-2">
         {specs.map((spec) => {
           const isPercent = PERCENT_KEYS.has(spec.key)
-          const value = candidate[spec.key]
+          const isChoke = spec.key === 'cm_choke_effectiveness'
+          const scale = isPercent ? 100 : isChoke ? CM_CHOKE_MAX_MH : 1
+          const value = candidate[spec.key] as number
           return (
             <label key={spec.key} className="flex items-center justify-between gap-3 text-xs">
-              <span className="text-ink-muted">{spec.label}</span>
+              <span className="text-ink-muted">
+                {isChoke ? 'Common-mode choke (mH)' : spec.label}
+              </span>
               <input
                 type="number"
                 className="input-base w-28 py-1 text-right"
-                min={isPercent ? spec.min * 100 : spec.min}
-                max={isPercent ? spec.max * 100 : spec.max}
-                step={isPercent ? spec.step * 100 : spec.step}
-                value={isPercent ? Math.round(value * 100) : value}
+                min={spec.min * scale}
+                max={spec.max * scale}
+                step={isChoke ? 0.1 : spec.step * scale}
+                value={isPercent ? Math.round(value * scale) : Number((value * scale).toFixed(2))}
                 onChange={(event) => {
                   const next = Number(event.target.value)
                   setCandidate({
                     ...candidate,
-                    [spec.key]: isPercent ? next / 100 : next,
+                    [spec.key]: next / scale,
                   })
                 }}
               />

@@ -457,18 +457,16 @@ PARAMETER_RANGES: Final[Tuple[ParameterRange, ...]] = (
     ),
     ParameterRange(
         key="cm_choke_effectiveness",
-        label="Common-Mode Choke Effectiveness",
+        label="Common-mode choke",
         unit="",
         minimum=0.0,
         maximum=1.0,
         step=0.01,
         default=0.0,
         description=(
-            "A ferrite or toroid on the motor cable that directly suppresses "
-            "common-mode noise current — the same noise mechanism this tool's "
-            "conducted-emissions score is built around. 0 = no choke. 1 = a "
-            "2 mH choke into the 50 ohm LISN, a first-order low-pass "
-            "(Ott, Electromagnetic Compatibility Engineering)."
+            "Inductance of a ferrite or toroid on the motor cable. 0 mH is no "
+            "choke. 2 mH is a full choke into the 50 ohm LISN, a first-order "
+            "low-pass (Ott, Electromagnetic Compatibility Engineering)."
         ),
     ),
     ParameterRange(

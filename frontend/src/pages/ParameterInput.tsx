@@ -25,11 +25,8 @@ import { SegmentedControl, Slider } from '../components/Slider'
  */
 
 /** Percentage-style parameters are stored 0-1 but are far easier to read as %. */
-const PERCENT_KEYS = new Set([
-  'shielding_quality',
-  'input_filter_quality',
-  'cm_choke_effectiveness',
-])
+const PERCENT_KEYS = new Set(['shielding_quality', 'input_filter_quality'])
+const CM_CHOKE_MAX_MH = 2
 
 const POWER_STAGE_KEYS = [
   'switching_frequency_khz',
@@ -109,24 +106,26 @@ export function ParameterInput({
           </div>
           {powerSpecs.map((spec) => {
             const isPercent = PERCENT_KEYS.has(spec.key)
+            const isChoke = spec.key === 'cm_choke_effectiveness'
+            const scale = isPercent ? 100 : isChoke ? CM_CHOKE_MAX_MH : 1
             return (
               <Slider
                 key={spec.key}
-                label={isPercent ? `${spec.label} (%)` : spec.label}
-                unit={isPercent ? '%' : spec.unit}
-                min={isPercent ? spec.min * 100 : spec.min}
-                max={isPercent ? spec.max * 100 : spec.max}
-                step={isPercent ? spec.step * 100 : spec.step}
-                value={
+                label={
                   isPercent
-                    ? parameters[spec.key] * 100
-                    : (parameters[spec.key] as number)
+                    ? `${spec.label} (%)`
+                    : isChoke
+                      ? 'Common-mode choke'
+                      : spec.label
                 }
-                precision={isPercent ? 0 : undefined}
+                unit={isPercent ? '%' : isChoke ? 'mH' : spec.unit}
+                min={spec.min * scale}
+                max={spec.max * scale}
+                step={isChoke ? 0.1 : spec.step * scale}
+                value={(parameters[spec.key] as number) * scale}
+                precision={isPercent ? 0 : isChoke ? 1 : undefined}
                 description={spec.description}
-                onChange={(value) =>
-                  setNumeric(spec.key, isPercent ? value / 100 : value)
-                }
+                onChange={(value) => setNumeric(spec.key, value / scale)}
               />
             )
           })}
